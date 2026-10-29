@@ -211,6 +211,17 @@ def submit():
         },
     }), 501
 
+    # Hardcode approach. Use content_id format as guide for other variables that are hardcoded 
+    # content_id = str(uuid.uuid4())
+    # return jsonify({
+    # "content_id": content_id,
+    # "'guess": "ai",
+    # "confidence": 0.73,
+    # "label": "likely_ai",
+    # "'model_score": 0.81, # detector.py
+    # "style_score": 0.65, # stylometry.py 
+    # 1）
+
 
 @app.post("/appeal")
 def appeal():
