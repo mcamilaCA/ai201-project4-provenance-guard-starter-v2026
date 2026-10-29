@@ -25,7 +25,7 @@ Routes:
 """
 
 import uuid
-
+import detector
 from flask import Flask, jsonify, request
 
 import audit
@@ -199,17 +199,44 @@ def submit():
     what should this do when `text` is missing, empty, or enormous? A crash on
     a malformed input is one of the most common real failures there is.
     """
+    
     payload = request.get_json(silent=True) or {}
 
+    if not isinstance(payload, dict):
+        payload = {}
+
+    text = payload.get("text")
+    creator_id = payload.get("creator_id")
+
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        creator_id = "unknown"
+
+    if not isinstance(text, str) or not text.strip():
+        audit.log_rejection(creator_id=creator_id, reason="invalid_text")
+        return jsonify({
+            "error": "invalid_text",
+            "message": "Send JSON with a non-empty string in 'text'",
+        }), 400
+
     # TODO: delete this and build the route.
+    content_id = str(uuid.uuid4())
+    # guess = 
+    # confidence = 
+    # label =
+    model_score = detector.model_signal(text)
+    #style score = 
+
+    audit.log_decision(content_id=content_id, creator_id=creator_id, model_score= model_score)
+
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /submit isn't built yet — see the TODO in app.py.",
-        "you_sent": {
-            "text_length": len(payload.get("text", "")),
-            "creator_id": payload.get("creator_id"),
-        },
-    }), 501
+        "content_id": content_id,
+        "guess": "ai" ,
+        "confidence": 0.73 ,
+        "label": "likely_ai",
+        "model_score": model_score, # given by detector.py
+        "style_score": 0.65  # given by stylometry.py
+    })
 
     # Hardcode approach. Use content_id format as guide for other variables that are hardcoded 
     # content_id = str(uuid.uuid4())
