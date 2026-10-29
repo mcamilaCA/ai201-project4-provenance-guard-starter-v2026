@@ -53,19 +53,19 @@
 
 ### Signal one — the model signal
 
-**What it measures:**
+**What it measures:**  How surprised GPT-2 is by the text, on average, per token. A perplexity of 53.6 means that at each step the model was about as unsure as if it were choosing among roughly 54 equally likely next tokens. Lower means more predictable (the text sticks to common words and common phrasings, which is what a model tends to produce), higher means more surprising (rare words, odd turns). It is not a measure of quality or authorship, only of predictability to this particular model. It also depends on length and topic, so the raw number isn't comparable across very different texts, which is why `model_signal` converts it into a 0–1 score instead of using it directly. 
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** The AI generated text will have more predictable words in sequence than human generated text.
 
-**What it can't see:**
+**What it can't see:** Maybe how a writter using their second or third language still communicates by overthinking wording and how they might choose options that do not have high variability but are safest options, adn hence more predictable and resemble more AI-like text 
 
 ### Signal two — the style signal
 
-**What it measures:**
+**What it measures:** A 0–1 score (higher = more likely AI) built only from the shape of the text, without understanding any of it: how much sentence lengths vary, how much of the vocabulary repeats, and how much and what kind of punctuation there is. The idea is that generated prose tends toward even, mid-length sentences and a narrower vocabulary, while human writing is lumpier. It measures something different from perplexity: signal one asks "is this predictable?", this one asks "does this look uniform?". For this text it currently means very little. The stub returns a fixed 0.5, and even a real implementation would have nothing to work with on one short sentence, so a style score here should be read as "no evidence either way".
 
-**Why that might differ between human and AI writing:**
+**Why that might differ between human and AI writing:** AI writting follows the patetrns and style it has seen through training, while humans curate their style by how they write, or the words they are prone to use, or maybe being more used to certain styles or figures of speech (such as metaphor, simile, etc).
 
-**What it can't see:**
+**What it can't see:** Someone might have a very coarse style or a style that is simmilar to the patterns AI has seen throughought its training (and hence, patters it also uses). Moreover, in short texts, it is very difficult to see a distinctive patters
 
 ### The combining rule
 
@@ -124,11 +124,20 @@
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "...", "creator_id": "..."}'
+  -d '{"text": "She is both the tempest and the halcyon an element of nature in its most genuine form. Never meant to be contained, simply made to be admired.", "creator_id": "camila"}'
 ```
 
 ```json
-
+-H "Content-Type: application/json" \
+  -d '{"text": "She is both the tempest and the halcyon an element of nature in its most genuine form. Never meant to be contained, simply made to be admired.", "creator_id": "camila"}'
+{
+  "confidence": 0.73,
+  "content_id": "887f326e-4095-4f44-aa6c-2c94c2c4fe04",
+  "guess": "ai",
+  "label": "likely_ai",
+  "model_score": 0.2349,
+  "style_score": 0.65
+}
 ```
 
 **An appeal**
@@ -159,9 +168,9 @@ $ curl "http://127.0.0.1:5000/log?limit=3"
 
 **Moment 1**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* Guidance on code section where I got too many errors (in this case how to unpack from payload or how to succesfully catch errors on the payload being a dict or not)
+- *What came back:* instructions and clues on how the code unfolds, for example: What to pass. Check the signature at audit.py:35. It takes content_id, creator_id, guess, model_score, style_score, combined_score, label and status. Everything after creator_id defaults to None.
+- *What I changed:* I wrote the code since the agent did not provide it but provided instructions
 
 **Moment 2**
 
