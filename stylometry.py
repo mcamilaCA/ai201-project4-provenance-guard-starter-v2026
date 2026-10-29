@@ -33,6 +33,8 @@ anything together:
 import re
 import statistics
 
+import config
+
 # Words counted by type_token_ratio. The ratio falls as text gets longer, so
 # every text is cut to this length before measuring.
 TTR_WINDOW = 100
@@ -47,8 +49,15 @@ MAX_PUNCT = 0.5
 MIN_PUNCT = 0.0
 
 def sentences(text: str) -> list[str]:
-    """Split into sentences. Rough and good enough — given to you."""
-    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    """
+    Split into sentences. Rough and good enough.
+
+    A sentence ends at . ! ? followed by whitespace, or at a line break, so
+    verse and other line-broken text is measured line by line instead of
+    collapsing into one "sentence". The catch: prose that was hard-wrapped
+    mid-sentence gets cut at every wrap.
+    """
+    parts = re.split(r"(?<=[.!?])\s+|\s*\n\s*", text.strip())
     return [p for p in parts if p.strip()]
 
 
@@ -176,6 +185,11 @@ def style_signal(text: str) -> float:
     you trust it. Plain and ordinary, not formal: formal prose reads as *human*
     to signal one, and it is plain writing that gets accused.
     """
+    # Too little text to measure: stand down instead of guessing. Short text
+    # would otherwise be scored on placeholders and length artifacts.
+    if len(words(text)) < config.MIN_WORDS:
+        return 0.5
+
     # All three raw measures run "higher = more human". Each is scaled onto
     # 0-1 first, then flipped, so every value below is "higher = more AI".
     spread_ai = 1 - _scale(sentence_length_spread(text), MIN_SPREAD, MAX_SPREAD)

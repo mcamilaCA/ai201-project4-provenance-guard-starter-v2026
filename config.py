@@ -47,12 +47,19 @@ DETECTOR_MODEL = os.getenv("AI201_DETECTOR_MODEL", "gpt2")
 DETECTOR_MAX_TOKENS = 400
 
 
+# Below this many words neither signal has enough text to measure anything:
+# perplexity is dominated by which words happen to appear, and the style
+# measures need several sentences to have a spread. Both signals return 0.5
+# ("no evidence either way") for shorter text, so the combined score lands in
+# the unsure band instead of making a confident claim about a few lines.
+MIN_WORDS = 40
+
+
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.
 #
-# ⚠️ These are placeholders. Milestone 4 asks you to write your combining rule
-# down BEFORE you code it, and to put the numbers in your README. Whatever you
-# decide, it goes here.
+# Equal weights: neither signal has earned more trust yet (see the README's
+# "The combining rule"). If you change them, change the README too.
 
 WEIGHT_MODEL_SIGNAL = 0.5
 WEIGHT_STYLE_SIGNAL = 0.5

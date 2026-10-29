@@ -94,6 +94,11 @@ def perplexity(text: str) -> float:
 
     model, tokenizer = _load()
 
+    # Line breaks and extra spaces are tokens too, and the same words scored
+    # anywhere from 36 to 115 depending only on how they were laid out. Collapse
+    # all whitespace to single spaces so layout can't move the score.
+    text = " ".join(text.split())
+
     encoded = tokenizer(
         text,
         return_tensors="pt",
@@ -124,7 +129,16 @@ def model_signal(text: str) -> float:
     You may want to move that midpoint once you've run the four calibration
     inputs in Milestone 4 and seen what your own text actually scores. If you
     do, say so in your README: it's a scoring decision, not a detail.
+
+    Text shorter than `config.MIN_WORDS` words returns 0.5 ("no evidence
+    either way") without loading the model: perplexity over a few lines says
+    more about which words happened to appear than about who wrote them.
+    `perplexity()` is still available on its own for the raw number. It
+    collapses whitespace before scoring, so layout doesn't change the result.
     """
+    if len(text.split()) < config.MIN_WORDS:
+        return 0.5
+
     ppl = perplexity(text)
 
     midpoint = 45.0    # perplexity that scores 0.5

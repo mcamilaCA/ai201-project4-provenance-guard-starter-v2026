@@ -67,21 +67,121 @@
 
 **What it can't see:** Someone might have a very coarse style or a style that is simmilar to the patterns AI has seen throughought its training (and hence, patters it also uses). Moreover, in short texts, it is very difficult to see a distinctive patters
 
+### A failure I found: both signals ranked a poem pair backwards
+
+I tested both signals on three short texts: a human-written poem, an AI-written poem, and "roses are red violets are blue" (a famous line, which could pass for either). The human poem scored *more* AI-like than the AI poem on both signals.
+
+| Text | Words | Perplexity | `model_signal` | `style_signal` |
+|---|---|---|---|---|
+| Human poem ("She is both the tempest and the halcyon…") | 31 | 35.6 | 0.5922 | 0.6083 |
+| AI poem ("In quiet hours when shadows softly bend…") | 30 | 181.4 | 0.0971 | 0.5444 |
+| "roses are red violets are blue" | 6 | 148.7 | 0.1287 (computed from the perplexity) | 0.5444 |
+
+These numbers were measured on the original code, before the 40-word floor, the newline splitting and the whitespace fix described below. The two poems were also laid out differently: the human poem had a blank line between every line, the AI poem had single newlines. I did not control for that at first, and it turned out to matter (see the correction after the signal-one paragraph).
+
+Raw output, pasted as text (the human poem, from `python detector.py` and `python stylometry.py`):
+
+```
+perplexity     35.6
+model_signal   0.5922   (higher = more likely AI)
+
+3 sentences, 31 words
+sentence_length_spread   0.3110855084191276
+type_token_ratio         0.8387096774193549
+punctuation_density      0.06451612903225806
+style_signal             0.6083   (higher = more likely AI)
+```
+
+**Stage and mechanism: signal one.** GPT-2 found the AI poem *more* surprising (perplexity 181) than the human one (36). The rhymed, slightly archaic phrasing ("shadows softly bend… familiar end") is unusual word-by-word for a small model, while "just like art" and "meant to be felt" are everyday phrases. Perplexity measures how predictable the words are to GPT-2, not who wrote them. `model_signal` is strictly decreasing in perplexity, so changing `midpoint` or `steepness` can slide the scores but can never swap the order of the two texts. That is why I did not tune it. Thirty words is also very little for a per-token average, and a famous line like "roses are red" is predictable because it is memorized, not because a model wrote it.
+
+**Correction: layout was moving the perplexity too.** While testing a poem of my own I found that the same words scored very differently depending only on whitespace: 36.1 with a blank line between every line, 115.3 with single newlines, and 49.4 on one run-on line. Line breaks and extra spaces are tokens, and GPT-2 treats them as part of the text. That meant the first measurement above was partly a layout effect, so I could not tell from it how much of the reversal was the model. I now collapse all whitespace to single spaces inside `detector.perplexity()` and measured the pair again with that fixed:
+
+| Text | Perplexity before | Perplexity with whitespace normalized | `model_signal` (normalized) |
+|---|---|---|---|
+| Human poem | 35.6 | 49.4 | 0.4629 |
+| AI poem | 181.4 | 231.3 | 0.0679 |
+
+Layout exaggerated the gap, but the reversal is still there: the AI poem is still far more surprising to GPT-2 than the human one. So the mechanism in the paragraph above holds, and layout was a second, separate problem in the same stage. It is also a way to move a score without changing a word, which a writer or an attack could use deliberately.
+
+**Stage and mechanism: signal two.** `sentences()` split only on `. ! ?`, so the AI poem, which has no punctuation until its last word, counted as *one* sentence. One sentence has no spread, so `sentence_length_spread` returned its placeholder 0.3 instead of measuring anything. The 0.06 gap between the two style scores came from that artifact, not from a real stylistic difference.
+
+**What I changed** (the first two cover both signals, the third is signal one only):
+
+1. **Short text gets "no evidence either way".** New setting `MIN_WORDS = 40` in `config.py`. Below it, `detector.model_signal` and `stylometry.style_signal` both return 0.5 instead of a confident number, so the combined score lands in the unsure band. All three texts above are under the floor and now score 0.5 on both signals. This also stops `"..."` from scoring as maximally AI (its style score was 1.0 before).
+2. **Line breaks end a sentence.** `stylometry.sentences()` now also splits at newlines, so the AI poem is measured as four lines of 7, 7, 8 and 8 words (spread 0.077) and the human poem as six lines (spread 0.333). The spread now points the right way on this pair: the uneven human text has the higher spread.
+3. **Whitespace is normalized before the detector scores.** `detector.perplexity()` collapses every run of spaces and line breaks to one space, so layout can no longer change the number. The line structure still reaches `stylometry.sentences()`, which gets the original text.
+
+**What I gave up.** The 40-word floor means a writer who submits a short poem or a few lines gets "unsure" every time, and so does someone sending a short AI-written message, so the system declines to judge both. Splitting on newlines has a cost too: prose that was hard-wrapped mid-sentence (pasted from an email or a terminal) is now cut at every wrap, which makes its sentences look short and uniform, and so more AI-like. I have not measured how often that happens, and 40 is a starting value I chose, not one I tuned. I have also only seen this failure on three samples, so it shows a mechanism, not a rate.
+
 ### The combining rule
 
 <!-- Write the rule in words, then give the numbers. What happens when the two
      signals disagree? -->
 
-**The rule:**
+**The rule:** A weighted average of the two scores, both on the same scale (higher = more likely AI). I don't resolve a disagreement in favour of either signal: when one says AI and the other says human, the average lands between them, in the unsure band, because two methods disagreeing is itself uncertainty. Text under 40 words never reaches this point with an opinion, because both signals return 0.5 for it (see "A failure I found" above), so the combined score is 0.5 and the label is unsure.
 
-**The numbers:**
+**The numbers:** `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5` in `config.py`. Equal, because neither signal has earned more trust: the model signal was fooled by a rhymed poem, and the style signal is built on three crude measures with bounds I guessed rather than tuned. The score is rounded to 4 places. `confidence` in the response is `abs(combined_score - 0.5) * 2`: 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
 
 **Where it lives:** `scoring.py::combine_signals`
 
 <!-- ⚠️ The grader checks your code against that line. If your rule lives
      somewhere else, say where. -->
 
+**Four-input check** (one text each, so a sanity check and not a measurement; every text is over the 40-word floor): an AI-written paragraph on remote work, Twain's opening of *Huckleberry Finn* as clearly human, Darwin's "entangled bank" passage as formal human writing, and the AI paragraph again with light edits (swapped words, merged sentences, one typo).
+
+| Text | Words | `model_score` | `style_score` | Combined | Label |
+|---|---|---|---|---|---|
+| Clearly AI | 78 | 0.8048 | 0.6211 | 0.7129 | ai |
+| Clearly human (Twain) | 108 | 0.4556 | 0.5534 | 0.5045 | unsure |
+| Formal human (Darwin) | 89 | 0.4904 | 0.5148 | 0.5026 | unsure |
+| Lightly-edited AI | 82 | 0.6591 | 0.6639 | 0.6615 | ai |
+
+What it showed:
+
+- **The formal human text was not accused**, which is the case that matters most. It came out unsure, though, not human.
+- **Neither human text reached the human label.** Both sit near 0.50, because neither signal goes low on them. The model signal does almost all the separating (0.80 for AI against 0.46 and 0.49 for the human texts); the style signal only ranges from 0.51 to 0.66 across all four.
+- **The edited AI is barely still caught:** 0.6615 against an AI threshold of 0.65. The edits dropped `model_score` from 0.80 to 0.66, so one more round of edits would likely turn it into unsure.
+- **The edit moved `style_score` the wrong way, up from 0.62 to 0.66.** My edits removed the commas after "First," "Additionally," and "Furthermore," so `punctuation_density` fell from 0.090 to 0.049, which reads as *more* AI. That is the signal-two blind spot from the file's own docstring, seen directly: changing the shape without changing the substance moves it.
+- **The flat style scores have a cause, shown in the per-measure table below.**
+- **No text here was a true split** (signals on opposite sides of 0.5): the largest gap between the two scores was 0.18 (the AI paragraph), and both of its scores were above 0.5.
+
+**Finding: the style signal barely discriminates, and it is not one problem but three.** Printing every number that feeds `style_score` for the same four texts (each column is the AI-ness of one measure after scaling and flipping, 0 to 1):
+
+| Text | `model_score` | spread | type-token | punctuation | `style_score` |
+|---|---|---|---|---|---|
+| Clearly AI | 0.805 | 0.902 | 0.141 | 0.821 | 0.621 |
+| Clearly human (Twain) | 0.456 | 0.520 | 0.400 | 0.741 | 0.553 |
+| Formal human (Darwin) | 0.490 | 0.544 | 0.225 | 0.775 | 0.515 |
+| Lightly-edited AI | 0.659 | 0.906 | 0.183 | 0.902 | 0.664 |
+| **Range (max − min)** | **0.349** | **0.387** | **0.259** | **0.162** | **0.149** |
+
+- **Sentence-length spread works.** It rates the two AI texts about 0.90 and the two human texts about 0.52 to 0.54, and the light edit barely moved it (0.902 to 0.906). It is the only part of signal two that separates these texts.
+- **Type-token ratio runs the wrong way on these four.** The AI paragraph gets the *lowest* AI-ness (0.141) and Twain the highest (0.400). Twain repeats words on purpose ("he told the truth", "Aunt Polly") and the AI text varies its vocabulary, which is the opposite of what the measure assumes. With one text each this may not hold in general, but on this set it drags the style score the wrong way.
+- **Punctuation density is nearly flat and high for everything** (0.74 to 0.90). It is scaled against a ceiling of 0.5 marks per word, but all four texts sit between 0.05 and 0.13, so it adds a high AI-ish value to every text and tells me almost nothing. The light edit also *raised* it (0.821 to 0.902), because removing commas after "Additionally," and "Furthermore," reads as more AI.
+- **Net effect:** one working measure, one backwards, one saturated, averaged with equal weights, which is why `style_score` spans only 0.149 against the model signal's 0.349 and puts the AI paragraph (0.62) only 0.07 above Twain (0.55).
+
+I have not retuned the scaling bounds or dropped a measure, because four texts are too few to tune against without just fitting them. This is the finding to carry into unit 8: signal two as built is close to a one-measure signal, and its weight in the combined score (0.5) is higher than what it has earned.
+
 **A case where my two signals split, and what my rule does with it:**
+
+I lengthened the AI poem from my earlier test to two stanzas (61 words, over the 40-word floor). The first stanza is the chatbot-written one from before; I added the second stanza in the same style, so the whole text is AI-written.
+
+```
+In quiet hours when shadows softly bend,
+And whispered thoughts find no familiar end,
+A steady warmth begins to trace the air,
+A gentle proof that you are resting there.
+The morning light will find its patient way,
+Through curtains drawn against the fading grey,
+And every hush that lingers on the stair
+Will carry back the quiet of your prayer.
+```
+
+| `model_score` | `style_score` | Gap | Combined | Label |
+|---|---|---|---|---|
+| 0.2618 | 0.6516 | 0.39 | 0.4567 | unsure |
+
+The signals land on opposite sides of 0.5. Signal one reads it as human because GPT-2 finds rhymed, slightly archaic phrasing surprising (the same mechanism as in "A failure I found"). Signal two reads it as AI because every line is 7 to 9 words long, so the spread is low. My rule averages them to 0.4567, inside the unsure band, so the result is "unsure". That is the behaviour I wanted: two methods disagreeing is treated as uncertainty, and the writer gets neither a human nor an AI verdict. The cost is the same as everywhere else: this really is AI text, and the system did not catch it. Here the style signal was right and the model signal was wrong, and the average let the wrong one pull the result away from "ai".
 
 
 
@@ -96,9 +196,9 @@
 
 | Label | Score range | The exact text a reader sees |
 |---|---|---|
-| high-confidence human |  |  |
-| unsure |  |  |
-| high-confidence AI |  |  |
+| high-confidence human | 0.00 – 0.35 | "We think this was probably written by a person." |
+| unsure | 0.35 – 0.65 | "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you." |
+| high-confidence AI | 0.65 – 1.00 | "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result." |
 
 **Why I worded the "unsure" one this way:**
 <!-- It's the hardest of the three. It has to admit uncertainty without
@@ -306,16 +406,16 @@ that produced it:
 
      SUBMISSION CHECKLIST — unit 7
 
-       [ ] criteria.md has five numbered criteria, each naming a target
-       [ ] Each has a reason underneath
-       [ ] POST /submit returns content_id, guess, confidence, label,
+       [x] criteria.md has five numbered criteria, each naming a target
+       [x] Each has a reason underneath
+       [x] POST /submit returns content_id, guess, confidence, label,
            model_score and style_score
-       [ ] Two signals that measure DIFFERENT things, each with a named blind spot
+       [x] Two signals that measure DIFFERENT things, each with a named blind spot
        [ ] Three label variants, all reachable, written out in full
        [ ] POST /appeal changes status and writes to the log
-       [ ] Signals and Scoring names scoring.py::combine_signals
+       [x] Signals and Scoring names scoring.py::combine_signals
        [ ] Sample Run: a submission AND an appeal, as pasted text
-       [ ] At least four new commits
+       [x] At least four new commits
        [ ] Repository URL submitted — WRITE IT DOWN
 
      SUBMISSION CHECKLIST — unit 8

@@ -30,6 +30,8 @@ from flask import Flask, jsonify, request
 
 import audit
 import config
+import scoring
+import stylometry
 
 app = Flask(__name__)
 
@@ -155,7 +157,6 @@ def health():
 def submit():
     """
     Take a piece of text, decide about it, log the decision, answer.
-    ← TODO — Milestones 3, 4 and 5
 
     Expects JSON:
         {"text": "...", "creator_id": "..."}
@@ -218,36 +219,35 @@ def submit():
             "message": "Send JSON with a non-empty string in 'text'",
         }), 400
 
-    # TODO: delete this and build the route.
     content_id = str(uuid.uuid4())
-    # guess = 
-    # confidence = 
-    # label =
+
     model_score = detector.model_signal(text)
-    #style score = 
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+    guess, label = scoring.score_to_label(combined_score)
 
-    audit.log_decision(content_id=content_id, creator_id=creator_id, model_score= model_score)
+    # Distance of the combined score from 0.5, "no evidence either way":
+    # 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
+    confidence = round(abs(combined_score - 0.5) * 2, 4)
 
+    audit.log_decision(
+        content_id=content_id,
+        creator_id=creator_id,
+        guess=guess,
+        model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
+        label=label,
+    )
 
     return jsonify({
         "content_id": content_id,
-        "guess": "ai" ,
-        "confidence": 0.73 ,
-        "label": "likely_ai",
-        "model_score": model_score, # given by detector.py
-        "style_score": 0.65  # given by stylometry.py
+        "guess": guess,
+        "confidence": confidence,
+        "label": label,
+        "model_score": model_score,
+        "style_score": style_score,
     })
-
-    # Hardcode approach. Use content_id format as guide for other variables that are hardcoded 
-    # content_id = str(uuid.uuid4())
-    # return jsonify({
-    # "content_id": content_id,
-    # "'guess": "ai",
-    # "confidence": 0.73,
-    # "label": "likely_ai",
-    # "'model_score": 0.81, # detector.py
-    # "style_score": 0.65, # stylometry.py 
-    # 1）
 
 
 @app.post("/appeal")
