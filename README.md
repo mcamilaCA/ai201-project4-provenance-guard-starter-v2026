@@ -205,6 +205,16 @@ The signals land on opposite sides of 0.5. Signal one reads it as human because 
      sounding like an accusation, because the person reading it may well have
      written every word themselves. -->
 
+The person reading this label may have written every word themselves, so it had to do three things:
+
+1. **Say plainly that the system doesn't know.** "We can't tell" is the whole finding. It doesn't hint at a lean in either direction, and it doesn't use words like "score", "confidence" or "inconclusive" that a reader would have to decode.
+2. **Say the uncertainty is the system's limit, not the writer's fault.** "That isn't a judgment about you or your writing" puts the gap in the tool. Someone who reads "unsure" as "you sound like a robot" is told directly that it doesn't mean that.
+3. **Tell them nothing is required.** "Nothing more is needed from you" stops the label from reading like a summons or a request to prove themselves. Unlike the AI label, it doesn't mention an appeal, because there is no decision against them to appeal.
+
+I avoided "might be AI" and "could be either" in this one. A reader hears "might be AI" as an accusation with a hedge on it, and that is the reading this label exists to prevent.
+
+**Boundaries.** A score of exactly 0.35 gets the human label and exactly 0.65 gets the AI label (`score_to_label` in `scoring.py` uses `<=` and `>=`). The numbers come from `HUMAN_THRESHOLD` and `AI_THRESHOLD` in `config.py`, and `scoring.label_ranges()` prints them, so this table can be checked against the code. All three labels are reachable: the four-input check above produced "ai" and "unsure", and any text scoring 0.35 or lower produces "human".
+
 
 
 ---
@@ -221,45 +231,86 @@ The signals land on opposite sides of 0.5. Signal one reads it as human because 
      two off the response, so leaving them out costs you next unit's
      diagnostics. -->
 
+The text is an AI-style paragraph on remote work that I wrote to exercise the "ai" label. It is not real human writing.
+
 ```bash
 $ curl -X POST http://127.0.0.1:5000/submit \
   -H "Content-Type: application/json" \
-  -d '{"text": "She is both the tempest and the halcyon an element of nature in its most genuine form. Never meant to be contained, simply made to be admired.", "creator_id": "camila"}'
+  -d '{"text": "Remote work has transformed the modern workplace in significant ways. First, it offers employees greater flexibility, allowing them to balance professional and personal responsibilities. Additionally, it reduces commuting time, which can improve overall well-being. Furthermore, companies can access a broader talent pool. However, it is important to consider challenges such as communication barriers and feelings of isolation. Overall, remote work presents both opportunities and challenges for organizations.", "creator_id": "camila-label-test"}'
 ```
 
 ```json
--H "Content-Type: application/json" \
-  -d '{"text": "She is both the tempest and the halcyon an element of nature in its most genuine form. Never meant to be contained, simply made to be admired.", "creator_id": "camila"}'
 {
-  "confidence": 0.73,
-  "content_id": "887f326e-4095-4f44-aa6c-2c94c2c4fe04",
+  "confidence": 0.3528,
+  "content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8",
   "guess": "ai",
-  "label": "likely_ai",
-  "model_score": 0.2349,
-  "style_score": 0.65
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "model_score": 0.7578,
+  "style_score": 0.5949
 }
 ```
+
+(Use `127.0.0.1`, not `localhost`: on macOS, `localhost:5000` is answered by AirPlay, not this service.)
 
 **An appeal**
 
 ```bash
 $ curl -X POST http://127.0.0.1:5000/appeal \
   -H "Content-Type: application/json" \
-  -d '{"content_id": "...", "reasoning": "..."}'
+  -d '{"content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8", "reasoning": "I wrote this paragraph myself for a class assignment. It is formal because the assignment asked for a formal tone."}'
 ```
 
 ```json
-
+{
+  "content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8",
+  "message": "Thank you. Your appeal has been recorded and this result is now under review.",
+  "status": "under_review"
+}
 ```
+
+Sending the same appeal again returns `409 already_under_review`, an unknown `content_id` returns `404 unknown_content_id`, and a missing `reasoning` returns `400 invalid_reasoning`. The 400s and the 404 are also written to the log as `rejected` entries.
 
 **What the log shows afterwards**
 
 ```bash
-$ curl "http://127.0.0.1:5000/log?limit=3"
+$ curl "http://127.0.0.1:5000/log"
 ```
 
-```json
+`/log` returns every entry, so this is that response filtered to the entries for the content_id above. The third entry is my own test of the missing-`reasoning` case. The log is append-only: the original decision keeps `"status": "decided"`, and the appeal sits after it with `"status": "under_review"`.
 
+```json
+{
+  "count": 3,
+  "entries": [
+    {
+      "combined_score": 0.6764,
+      "content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8",
+      "creator_id": "camila-label-test",
+      "guess": "ai",
+      "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+      "model_score": 0.7578,
+      "status": "decided",
+      "style_score": 0.5949,
+      "timestamp": "2026-11-02T00:33:48+00:00"
+    },
+    {
+      "content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8",
+      "creator_id": "camila-label-test",
+      "event": "appeal",
+      "reasoning": "I wrote this paragraph myself for a class assignment. It is formal because the assignment asked for a formal tone.",
+      "status": "under_review",
+      "timestamp": "2026-11-02T00:34:55+00:00"
+    },
+    {
+      "content_id": "02bdc904-0470-4c2b-bc8c-b41d166394d8",
+      "creator_id": "unknown",
+      "event": "rejected",
+      "reason": "invalid_reasoning",
+      "status": "rejected",
+      "timestamp": "2026-11-02T00:34:55+00:00"
+    }
+  ]
+}
 ```
 
 ---
@@ -412,9 +463,9 @@ that produced it:
            model_score and style_score
        [x] Two signals that measure DIFFERENT things, each with a named blind spot
        [ ] Three label variants, all reachable, written out in full
-       [ ] POST /appeal changes status and writes to the log
+       [x] POST /appeal changes status and writes to the log
        [x] Signals and Scoring names scoring.py::combine_signals
-       [ ] Sample Run: a submission AND an appeal, as pasted text
+       [x] Sample Run: a submission AND an appeal, as pasted text
        [x] At least four new commits
        [ ] Repository URL submitted — WRITE IT DOWN
 

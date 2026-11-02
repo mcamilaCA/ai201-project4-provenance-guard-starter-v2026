@@ -272,12 +272,56 @@ def appeal():
     """
     payload = request.get_json(silent=True) or {}
 
-    # TODO: delete this and build the route.
+    if not isinstance(payload, dict):
+        payload = {}
+
+    content_id = payload.get("content_id")
+    reasoning = payload.get("reasoning")
+
+    if not isinstance(content_id, str) or not content_id.strip():
+        audit.log_rejection(creator_id="unknown", reason="invalid_content_id")
+        return jsonify({
+            "error": "invalid_content_id",
+            "message": "Send JSON with the content_id you got back from /submit.",
+        }), 400
+
+    if not isinstance(reasoning, str) or not reasoning.strip():
+        audit.log_rejection(creator_id="unknown", reason="invalid_reasoning",
+                            content_id=content_id)
+        return jsonify({
+            "error": "invalid_reasoning",
+            "message": "Tell us in a sentence or two why you think this result is wrong.",
+        }), 400
+
+    # A typo'd id must fail loudly, not look like an appeal that went through.
+    history = audit.entries_for(content_id)
+    decision = next((e for e in history if e.get("event") != "appeal"
+                     and e.get("guess") is not None), None)
+    if decision is None:
+        audit.log_rejection(creator_id="unknown", reason="unknown_content_id",
+                            content_id=content_id)
+        return jsonify({
+            "error": "unknown_content_id",
+            "message": "We have no submission with that content_id. Check it and try again.",
+        }), 404
+
+    if any(e.get("status") == "under_review" for e in history):
+        return jsonify({
+            "error": "already_under_review",
+            "message": "This result is already under review. You don't need to send it again.",
+        }), 409
+
+    audit.log_appeal(
+        content_id=content_id,
+        creator_id=decision["creator_id"],
+        reasoning=reasoning.strip(),
+    )
+
     return jsonify({
-        "error": "not_implemented",
-        "message": "POST /appeal isn't built yet — see the TODO in app.py.",
-        "you_sent": payload,
-    }), 501
+        "content_id": content_id,
+        "status": "under_review",
+        "message": "Thank you. Your appeal has been recorded and this result is now under review.",
+    })
 
 
 # ── Already works ─────────────────────────────────────────────────────────────
