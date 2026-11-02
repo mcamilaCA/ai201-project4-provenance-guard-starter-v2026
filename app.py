@@ -20,11 +20,16 @@ Routes:
     POST /ping        the worked example. Already works. Don't edit it
     POST /submit      ← YOU BUILD THIS (Milestone 3, 4, 5)
     POST /appeal      ← YOU BUILD THIS (Milestone 5)
+    GET  /content/<id> one item's current status (stretch)
+    POST /verify/start, /verify/complete  the verified-human path (stretch)
     GET  /log         the audit log. Already works
     GET  /health      is the service up, and is the model loaded
 """
 
+import random
 import uuid
+from datetime import datetime, timedelta, timezone
+
 import detector
 from flask import Flask, jsonify, request
 
@@ -225,6 +230,7 @@ def submit():
     style_score = stylometry.style_signal(text)
     combined_score = scoring.combine_signals(model_score, style_score)
     guess, label = scoring.score_to_label(combined_score)
+    verified = audit.is_verified(creator_id)
 
     # Distance of the combined score from 0.5, "no evidence either way":
     # 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
@@ -238,6 +244,7 @@ def submit():
         style_score=style_score,
         combined_score=combined_score,
         label=label,
+        verified_human=verified,
     )
 
     return jsonify({
@@ -247,6 +254,7 @@ def submit():
         "label": label,
         "model_score": model_score,
         "style_score": style_score,
+        "verified_human": verified,
     })
 
 
@@ -321,6 +329,182 @@ def appeal():
         "content_id": content_id,
         "status": "under_review",
         "message": "Thank you. Your appeal has been recorded and this result is now under review.",
+    })
+
+
+@app.get("/content/<content_id>")
+def get_content(content_id: str):
+    """
+    One item's current status, read back from the audit log.
+
+        curl http://127.0.0.1:5000/content/<content_id>
+
+    The log is append-only, so "current" means the most recent entry for that
+    id: `decided` until the writer appeals, `under_review` after.
+    """
+    history = audit.entries_for(content_id)
+    decision = next((e for e in history if e.get("event") != "appeal"
+                     and e.get("guess") is not None), None)
+    if decision is None:
+        return jsonify({
+            "error": "unknown_content_id",
+            "message": "We have no submission with that content_id. Check it and try again.",
+        }), 404
+
+    appeal_entry = next((e for e in reversed(history) if e.get("event") == "appeal"), None)
+    # A refused request can carry this id too (a bad appeal); it never changed
+    # the item, so it doesn't count toward its status.
+    current = [e for e in history if e.get("event") != "rejected"][-1]
+
+    return jsonify({
+        "content_id": content_id,
+        "status": current["status"],
+        "guess": decision["guess"],
+        "label": decision["label"],
+        "model_score": decision["model_score"],
+        "style_score": decision["style_score"],
+        "combined_score": decision["combined_score"],
+        "decided_at": decision["timestamp"],
+        # Read now, not at submit time: a writer who verifies later is
+        # verified on work they submitted earlier too.
+        "verified_human": audit.is_verified(decision["creator_id"]),
+        "appeal": None if appeal_entry is None else {
+            "reasoning": appeal_entry["reasoning"],
+            "appealed_at": appeal_entry["timestamp"],
+        },
+    })
+
+
+# ── The verified-human path (stretch) ─────────────────────────────────────────
+
+VERIFY_PROMPTS = [
+    "Describe a meal you remember well, and why it stuck with you.",
+    "Write about a place you go when you need to think.",
+    "Explain something you learned the hard way.",
+    "Describe a person who changed how you work, and how.",
+]
+
+
+@app.post("/verify/start")
+def verify_start():
+    """
+    Step one: ask for a challenge. Expects {"creator_id": "..."}.
+
+    Returns a fresh prompt and a deadline. The writer answers it live, in their
+    own words, through /verify/complete.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = {}
+    creator_id = payload.get("creator_id")
+
+    if not isinstance(creator_id, str) or not creator_id.strip():
+        audit.log_rejection(creator_id="unknown", reason="invalid_creator")
+        return jsonify({
+            "error": "invalid_creator",
+            "message": "Send JSON with a non-empty string in 'creator_id'.",
+        }), 400
+
+    challenge_id = str(uuid.uuid4())
+    prompt = random.choice(VERIFY_PROMPTS)
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=config.VERIFY_WINDOW_SECONDS)
+    audit.log_verification(
+        creator_id, "verify_started", challenge_id,
+        prompt=prompt, expires_at=expires_at.isoformat(timespec="seconds"),
+    )
+
+    return jsonify({
+        "challenge_id": challenge_id,
+        "prompt": prompt,
+        "min_words": config.MIN_WORDS,
+        "expires_in_seconds": config.VERIFY_WINDOW_SECONDS,
+    })
+
+
+@app.post("/verify/complete")
+def verify_complete():
+    """
+    Step two: answer the challenge. Expects {"challenge_id": "...", "text": "..."}.
+
+    The answer is scored with the same two signals as any submission. It passes
+    if it is long enough to score and does not come out as "ai". A passing
+    answer earns the credential, which then shows as `verified_human` on that
+    writer's work. A failing answer earns nothing, and the writer can start a
+    new challenge.
+    """
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        payload = {}
+    challenge_id = payload.get("challenge_id")
+    text = payload.get("text")
+
+    if not isinstance(challenge_id, str) or not challenge_id.strip():
+        audit.log_rejection(creator_id="unknown", reason="invalid_challenge_id")
+        return jsonify({
+            "error": "invalid_challenge_id",
+            "message": "Send the challenge_id you got back from /verify/start.",
+        }), 400
+
+    history = audit.challenge_entries(challenge_id)
+    started = next((e for e in history if e.get("event") == "verify_started"), None)
+    if started is None:
+        audit.log_rejection(creator_id="unknown", reason="unknown_challenge_id",
+                            challenge_id=challenge_id)
+        return jsonify({
+            "error": "unknown_challenge_id",
+            "message": "We have no challenge with that id. Start a new one.",
+        }), 404
+
+    creator_id = started["creator_id"]
+
+    if any(e.get("event") in ("verify_passed", "verify_failed") for e in history):
+        return jsonify({
+            "error": "challenge_closed",
+            "message": "This challenge was already answered. Start a new one to try again.",
+        }), 409
+
+    if datetime.now(timezone.utc) > datetime.fromisoformat(started["expires_at"]):
+        audit.log_rejection(creator_id=creator_id, reason="challenge_expired",
+                            challenge_id=challenge_id)
+        return jsonify({
+            "error": "challenge_expired",
+            "message": "Time ran out for this challenge. Start a new one.",
+        }), 410
+
+    if not isinstance(text, str) or len(text.split()) < config.MIN_WORDS:
+        # Too short to score. Not a failure: the challenge stays open.
+        audit.log_rejection(creator_id=creator_id, reason="answer_too_short",
+                            challenge_id=challenge_id)
+        return jsonify({
+            "error": "answer_too_short",
+            "message": f"Write at least {config.MIN_WORDS} words so we have enough to go on.",
+        }), 400
+
+    model_score = detector.model_signal(text)
+    style_score = stylometry.style_signal(text)
+    combined_score = scoring.combine_signals(model_score, style_score)
+    guess, _ = scoring.score_to_label(combined_score)
+    passed = guess != "ai"
+
+    audit.log_verification(
+        creator_id,
+        "verify_passed" if passed else "verify_failed",
+        challenge_id,
+        model_score=model_score,
+        style_score=style_score,
+        combined_score=combined_score,
+    )
+
+    if passed:
+        message = "You're verified. Your work will now show that you completed this check."
+    else:
+        message = ("We couldn't verify this answer. Automated checks can be wrong; "
+                   "you can start a new challenge and try again.")
+    return jsonify({
+        "challenge_id": challenge_id,
+        "creator_id": creator_id,
+        "verified_human": passed,
+        "message": message,
     })
 
 

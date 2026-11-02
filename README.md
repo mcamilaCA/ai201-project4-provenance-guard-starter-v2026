@@ -194,6 +194,9 @@ Will carry back the quiet of your prayer.
 The signals land on opposite sides of 0.5. Signal one reads it as human because GPT-2 finds rhymed, slightly archaic phrasing surprising (the same mechanism as in "A failure I found"). Signal two reads it as AI because every line is 7 to 9 words long, so the spread is low. My rule averages them to 0.4567, inside the unsure band, so the result is "unsure". That is the behaviour I wanted: two methods disagreeing is treated as uncertainty, and the writer gets neither a human nor an AI verdict. The cost is the same as everywhere else: this really is AI text, and the system did not catch it. Here the style signal was right and the model signal was wrong, and the average let the wrong one pull the result away from "ai".
 
 
+## GET /content/<id> Endpoint - Stretch Feature
+
+Give it a `content_id` from `/submit` and it reads that item's entries back from the audit log and returns its current status (`decided` or `under_review`) with the original decision and any appeal, or a 404 if the id is unknown.
 
 ---
 
@@ -322,6 +325,14 @@ $ curl "http://127.0.0.1:5000/log"
   ]
 }
 ```
+## The Human Path - Stretch Feature
+
+**What it does:** A writer asks for a challenge (`POST /verify/start`), answers a fresh prompt of at least 40 words within 10 minutes (`POST /verify/complete`), and if the answer isn't scored as AI they earn a verified-human credential that shows as `"verified_human": true` on `/submit` and `GET /content/<id>`, including on work submitted earlier. It only adds a badge; the verdict and label are unchanged.
+
+**Limits:** The check reuses the same detector as everything else, so it inherits that detector's blind spots, and "not scored as AI" includes "unsure", so lightly edited AI text could earn the credential. The answer also isn't tied to later submissions, so a verified writer can still submit AI text and it will carry the badge.
+
+**Future work:** Add a reviewer-approved route (the writer submits drafts or version history and a person approves it), let the credential expire or be revoked, and tie it to individual submissions instead of to the writer.
+
 
 ---
 

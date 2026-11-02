@@ -55,6 +55,13 @@ DETECTOR_MAX_TOKENS = 400
 MIN_WORDS = 40
 
 
+# ─── Verified-human path (stretch) ───────────────────────────────────────────
+# A writer earns the credential by answering a fresh prompt, live, inside this
+# window. Answers under MIN_WORDS can't be scored (see above), so they are
+# refused instead of passed.
+VERIFY_WINDOW_SECONDS = 600
+
+
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.
 #

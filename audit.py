@@ -112,6 +112,36 @@ def log_rejection(creator_id: str, reason: str, **extra) -> dict:
     })
 
 
+def log_verification(creator_id: str, event: str, challenge_id: str, **extra) -> dict:
+    """
+    Record one step of the verified-human path: `verify_started`,
+    `verify_passed` or `verify_failed`.
+
+    Like everything else here it is append-only. The credential is not a
+    flag that gets set; it is read back from these entries by `is_verified`.
+    """
+    return _append({
+        "timestamp": _now(),
+        "creator_id": creator_id,
+        "challenge_id": challenge_id,
+        "event": event,
+        **extra,
+    })
+
+
+def challenge_entries(challenge_id: str) -> list[dict]:
+    """Every verification entry for one challenge, in order."""
+    return [e for e in read_entries() if e.get("challenge_id") == challenge_id]
+
+
+def is_verified(creator_id: str) -> bool:
+    """Has this writer passed a live writing challenge?"""
+    return any(
+        e.get("event") == "verify_passed" and e.get("creator_id") == creator_id
+        for e in read_entries()
+    )
+
+
 def _append(entry: dict) -> dict:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)
