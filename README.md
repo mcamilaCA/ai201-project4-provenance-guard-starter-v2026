@@ -39,7 +39,17 @@
 <!-- The path a submission takes, from arriving to the label a reader sees.
      Six or seven steps — this is the trace you wrote in Milestone 1. -->
 
+A writer (or a script) sends a piece of text and gets back a verdict a person can read. Here is the path one submission takes through `POST /submit`:
 
+1. **The request arrives** (`app.py::submit`). The body is JSON with `text` and `creator_id`. A body that isn't a JSON object is treated as empty, and a missing `creator_id` becomes `"unknown"`.
+2. **The route decides whether the text can be scored at all.** If `text` is missing, not a string, or only whitespace, the route writes a `rejected` entry to the audit log and answers `400 invalid_text`. Otherwise it creates a `content_id` (a UUID), which `/appeal` needs later.
+3. **Signal one: how predictable is it?** (`detector.py::model_signal`). Whitespace is collapsed to single spaces, GPT-2 measures its average surprise per token (perplexity), and that is converted to a 0–1 score where higher means more AI-like. Text under 40 words returns 0.5, meaning "no evidence either way".
+4. **Signal two: how uniform does it look?** (`stylometry.py::style_signal`). It measures sentence-length spread (line breaks count as sentence ends), vocabulary repetition and punctuation density, and combines them into a 0–1 score pointing the same way. Under 40 words it also returns 0.5.
+5. **The two scores become one** (`scoring.py::combine_signals`). It is an equal-weight average (0.5 and 0.5, set in `config.py`). When the signals disagree, the average lands in the middle, so disagreement shows up as uncertainty.
+6. **The score becomes a label** (`scoring.py::score_to_label`). 0.35 or lower is "human", 0.65 or higher is "ai", and anything between is "unsure". Each comes with a full sentence written for a reader, shown under Label Variants. The response's `confidence` is how far the score is from 0.5, scaled to 0–1.
+7. **The decision is logged and answered** (`audit.py::log_decision`). One line goes into `logs/audit.jsonl` with the `content_id`, `creator_id`, guess, both signal scores, the combined score, the label and the status `decided`. The response carries `content_id`, `guess`, `confidence`, `label`, `model_score` and `style_score`.
+
+**If the writer disagrees:** `POST /appeal` takes the `content_id` and the writer's reasoning, checks that the id exists, appends an appeal entry to the log with status `under_review` (the original decision is never edited), and confirms. Appealing the same result twice returns `409`, and an unknown id returns `404`.
 
 ---
 
@@ -325,9 +335,9 @@ $ curl "http://127.0.0.1:5000/log"
 
 **Moment 2**
 
-- *What I asked for:*
-- *What came back:*
-- *What I changed:*
+- *What I asked for:* Text that would produce each of the three labels, submitted through the running service, so I could show that all three are reachable.
+- *What came back:* Three texts the assistant wrote itself (an AI-style paragraph, a casual anecdote, a short memoir passage) and the real `/submit` responses for them: "ai" at 0.6764, "unsure" at 0.4675 and "human" at 0.3392. It also pointed out two things I would otherwise have missed: the "human" passage is AI-written, so it shows the range is reachable and says nothing about whether the detector works, and it only just got under the 0.35 cutoff, carried by the model signal while the style signal stayed near 0.5. Separately, `curl` to `localhost:5000` was being answered by macOS AirPlay, not my app.
+- *What I changed:* I use `127.0.0.1:5000` in every curl command in this README and say why next to the first one. I treat that "human" result as a range check, not as evidence, and the Sample Run says the submitted text is AI-style text written for the test.
 
 <!-- ═══════════════════════ UNIT 8 — THE TEST ═══════════════════════ -->
 
