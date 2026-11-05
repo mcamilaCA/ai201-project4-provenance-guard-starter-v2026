@@ -1,0 +1,89 @@
+[
+  {
+    "id": "OWN1",
+    "name": "lookalike letters",
+    "targets": "signal one (rare tokens) and signal two (words() drops them)",
+    "control": {
+      "status": 200,
+      "confidence": 0.2876,
+      "content_id": "0000fb75-cb7c-42b2-9a6c-cac4ff413825",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.7578,
+      "style_score": 0.5949,
+      "words": 67,
+      "combined": 0.6438,
+      "sent": "Remote work has transformed the modern workplace in significant ways. "
+    },
+    "attack": {
+      "status": 200,
+      "confidence": 0.272,
+      "content_id": "cbe5d631-d319-4bb6-a6ff-648d7ae0fa8f",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.415,
+      "style_score": 0.7307,
+      "words": 67,
+      "combined": 0.636,
+      "sent": "Rеmоtе wоrk hаs trаnsfоrmеd thе mоdеrn wоrkplаcе in significаnt wаys. "
+    }
+  },
+  {
+    "id": "OWN2",
+    "name": "hard-wrapped human text",
+    "targets": "signal two (newlines split sentences)",
+    "control": {
+      "status": 200,
+      "confidence": 0.1466,
+      "content_id": "3d3449af-697a-426e-b511-2080e63ef2a5",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.6173,
+      "style_score": 0.5545,
+      "words": 81,
+      "combined": 0.5733,
+      "sent": "I keep meaning to clean out the garage but every weekend something els"
+    },
+    "attack": {
+      "status": 200,
+      "confidence": 0.2344,
+      "content_id": "7c80ea5e-8f4c-4b55-a7e7-b658c35ebfcc",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.6173,
+      "style_score": 0.6172,
+      "words": 81,
+      "combined": 0.6172,
+      "sent": "I keep meaning to clean out the\ngarage but every weekend something\nels"
+    }
+  },
+  {
+    "id": "OWN3",
+    "name": "AI text past the token window",
+    "targets": "signal one (reads only the first 400 tokens)",
+    "control": {
+      "status": 200,
+      "confidence": 0.2876,
+      "content_id": "6ab5e05c-d0ff-4a02-a23d-f37929b1c048",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.7578,
+      "style_score": 0.5949,
+      "words": 67,
+      "combined": 0.6438,
+      "sent": "Remote work has transformed the modern workplace in significant ways. "
+    },
+    "attack": {
+      "status": 200,
+      "confidence": 0.2042,
+      "content_id": "a0b2b789-c4fa-4015-9673-1c8b63b468f5",
+      "guess": "unsure",
+      "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+      "model_score": 0.6223,
+      "style_score": 0.5935,
+      "words": 437,
+      "combined": 0.6021,
+      "sent": "So this week was a mess, where do I even start. On Monday the bus neve"
+    }
+  }
+]

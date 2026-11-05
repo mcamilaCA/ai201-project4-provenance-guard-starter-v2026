@@ -1203,6 +1203,49 @@ Per-text guesses for the sets that moved, trial 1 (after combined score in brack
 
 ---
 
+## Attacks of My Own - Stretch Feature
+
+**What I'm adding:** three attacks I wrote myself, sent to my own service through `POST /submit` the way an outside user would, using a new script, `attack_own.py`. "Someone else's system" here means my service seen from the user's side, not another person's deployment. Each attack is sent next to an unmodified control, so any change in score comes from the edit. They are different from the 56-attack set: they target things I found in my own results, not the families in `attacks.csv`.
+
+1. **Lookalike letters (evasion, signal one and two).** Take an AI paragraph and swap a few Latin letters for visually identical Cyrillic ones (`a`, `e`, `o`). A reader sees no change. GPT-2 splits the altered words into rare tokens, which should raise perplexity, and `stylometry.words()` only keeps `[a-z0-9']`, so those words should drop out of the vocabulary count.
+2. **Hard-wrapped human text (false positive, signal two).** Take a human paragraph and break it into short lines, as happens when text is pasted from an email or terminal. I wrote in the README that newline splitting would make wrapped prose look short and uniform, and that I had not measured it. This measures it.
+3. **AI text hidden past the token window (evasion, signal one).** Put about 450 tokens of casual human-style text first and the AI paragraph last. `DETECTOR_MAX_TOKENS = 400`, so signal one should never read the AI part, while signal two reads all of it. This is different from EV09, which bolted a short human opening on and did not test the 400-token cutoff.
+
+All texts are written by me for the test (the "human" ones are my own writing, the "AI" one is an AI-style paragraph), so the results show mechanisms, not rates.
+
+### What the three attacks did
+
+Run with `python attack_own.py` at the 0.3/0.7 weights (raw output in `results/attack_own_2026-11-05_1656.json`). Each attack was sent as its own `creator_id` (`OWN1_attack` and so on), spaced 12 seconds apart to stay under the 6-per-minute limit, and all six returned 200. "Combined" is `0.3 × model + 0.7 × style`.
+
+```
+OWN1_control   200  unsure  model 0.7578  style 0.5949  combined 0.6438
+OWN1_attack    200  unsure  model 0.415   style 0.7307  combined 0.636
+OWN2_control   200  unsure  model 0.6173  style 0.5545  combined 0.5733
+OWN2_attack    200  unsure  model 0.6173  style 0.6172  combined 0.6172
+OWN3_control   200  unsure  model 0.7578  style 0.5949  combined 0.6438
+OWN3_attack    200  unsure  model 0.6223  style 0.5935  combined 0.6021
+```
+
+| Attack | Model score (control → attack) | Style score (control → attack) | Combined | Label | Did it work? |
+|---|---|---|---|---|---|
+| OWN1 lookalike letters | 0.758 → 0.415 (−0.343) | 0.595 → 0.731 (+0.136) | 0.644 → 0.636 | unsure → unsure | **Half.** Signal one fell as predicted, signal two moved the wrong way. |
+| OWN2 hard-wrapped human text | 0.617 → 0.617 (no change) | 0.555 → 0.617 (+0.063) | 0.573 → 0.617 | unsure → unsure | **Yes, in direction.** Human text looks more AI after wrapping, but not enough to cross 0.65. |
+| OWN3 AI past the token window | 0.758 → 0.622 (−0.136) | 0.595 → 0.594 (no change) | 0.644 → 0.602 | unsure → unsure | **Yes, in mechanism.** Signal one stopped seeing the AI text. The label did not change. |
+
+**No attack changed a label, and I need to say why that is a weak result.** The control for OWN1 and OWN3 is the same AI paragraph from my Sample Run. At the old 0.5/0.5 weights it scored 0.6764 and was labelled "ai". At 0.3/0.7 it scores 0.6438, which is 0.006 under `AI_THRESHOLD`, so it is "unsure" before any attack touches it. That is a side effect of my reweight: the label I used in the Sample Run to show the "ai" label no longer comes out of that text. An attack that starts from "unsure" can't be shown to move the label to "unsure", so the useful numbers are the signal scores, not the labels.
+
+**OWN1: lookalike letters.** The perplexity half worked as predicted: `model_score` dropped from 0.758 to 0.415 (by 0.343) because the altered words tokenize into rare pieces, and that is a bigger move than any evasion in the attack set made with visible edits. A reader sees the same sentence. The style half went the other way from what I predicted. I thought `words()` would drop the altered words, but it splits each one at the Cyrillic letters instead. The same text went from 68 words (58 unique, type-token ratio 0.853) to 159 "words" (74 unique, ratio 0.465), because the fragments repeat. A low type-token ratio reads as repetitive vocabulary, so `style_score` rose from 0.595 to 0.731. The two signals moved in opposite directions and the weighted average roughly cancelled them (0.644 → 0.636). The 0.3/0.7 weights helped here: at the old 0.5/0.5 the same moves would have given 0.676 → 0.573, a drop of 0.10 that crosses the line. So this evasion works worse against the reweighted system than it would have before, and the reason is that signal two now counts for more and it happens to resist this edit. A better attacker would pair the lookalike letters with something that lowers signal two as well.
+
+**OWN2: hard-wrapped human text.** This confirms the cost I wrote down in "A failure I found" and had not measured. The text is 81 words and 4 sentences (lengths 15, 40, 9, 17). Wrapped at 34 characters, `stylometry.sentences()` sees 17 lines of 2 to 8 words each. `model_score` did not move at all (0.6173 both times), which shows the whitespace fix in `detector.perplexity()` works. `style_score` rose from 0.555 to 0.617, and the combined score from 0.573 to 0.617, which is 0.033 under the AI line. It is one sample, but an ordinary email-wrapped paragraph moved most of the way toward an accusation with no change in wording. A writer who pastes hard-wrapped text from a terminal is the person this hurts, and a longer or more uniform wrapped text would likely cross the line.
+
+**OWN3: AI text past the token window.** I made a 428-token casual opening and put the AI paragraph last. `model_score` fell from 0.758 to 0.622, and 0.622 is what GPT-2 says about the casual opening by itself, which means signal one never read the AI paragraph. `style_score` stayed 0.594 because it reads all the text, and the AI paragraph is a small share of it, so it barely moved. Two findings here. The attack works as designed: anything after about 300 words is invisible to signal one. And the casual human-style opening itself scored 0.62 on the model signal, which is high for text meant to read as clearly human, the same weakness as in the false-positive attacks. The combined score fell by 0.04 (0.644 → 0.602). A longer AI text, where the AI part is most of the text, would already have been scored on its first 400 tokens only, so this is mainly a gap for short AI text hidden inside a long human one.
+
+**What I'd fix, in order:** (1) score the whole text in chunks of 400 tokens and average them, which closes OWN3 and helps EV09; (2) stop splitting on newlines when most lines don't end in punctuation, which is what hard-wrapping looks like (OWN2); (3) normalise lookalike letters to plain Latin before any signal reads the text, or treat a high share of non-Latin letters in an English text as a flag of its own (OWN1). I did not make any of these changes in this stretch, because the point was to attack the system as it stands.
+
+**Limits of this test:** one text per attack and one control per attack, so these show mechanisms and a direction, not rates. All the texts are mine. I did not retest at 0.5/0.5, and the 0.5/0.5 figures for OWN1 above are calculated from the logged scores, not measured.
+
+---
+
 ## What's Still Broken
 
 **Attacks still getting through (15 of 56 broke after the reweight):**
