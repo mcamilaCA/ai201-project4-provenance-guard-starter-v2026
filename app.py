@@ -87,7 +87,11 @@ if config.RATE_LIMITING_ENABLED:
         if not isinstance(payload, dict):
             return get_remote_address()
         creator = payload.get("creator_id")
-        return creator if isinstance(creator, str) and creator.strip() else get_remote_address()
+        if isinstance(creator, str) and creator.strip():
+            # Trim and case-fold so "Camila" and "camila " are one caller, not
+            # two. The audit log still records the id exactly as sent.
+            return creator.strip().casefold()
+        return get_remote_address()
 
     limiter = Limiter(
         key_func=rate_limit_key,

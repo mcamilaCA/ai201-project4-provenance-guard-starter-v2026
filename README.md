@@ -1246,6 +1246,59 @@ OWN3_attack    200  unsure  model 0.6223  style 0.5935  combined 0.6021
 
 ---
 
+## Per-Creator Rate Limits - Stretch Feature
+
+**What I'm adding:** a check, and one fix, for per-creator rate limiting, plus a note on what moving from per-address to per-creator changes. `rate_limit_key()` in `app.py` already counts a request against its `creator_id` and only falls back to the caller's address when the id is missing or isn't a string, so I'm not rebuilding that. I'm adding:
+
+1. **A test script, `check_creator_limits.py`,** that sends short texts (under 40 words, so no model is loaded) and shows the difference in status codes: two creators behind one address, one creator spelled three ways, one script rotating ids, and a caller with no id at all.
+2. **One fix:** the key is normalised (trimmed and case-folded) before it is counted. Today `"Camila"` and `"camila "` are two different callers, so a script can double its allowance by changing capitalisation.
+3. **The note** on what per-creator limits change, including the new weakness they create.
+
+My limits stay at 6 per minute and a daily cap (see "Rate Limiting" above). I'm changing who is counted, not how much.
+
+### What the per-creator limit does
+
+Run with `python check_creator_limits.py` (6 requests per minute, bursts of 9, all from this one machine). I ran it twice against the live service: once with the original `app.py` and once after the normalisation fix, restarting nothing in between (the dev server reloads itself). Each run uses fresh creator names, so counts from the earlier run did not carry over.
+
+```
+BEFORE (original app.py)                                   AFTER (normalised key)
+1. one creator sends 9                                     1. one creator sends 9
+   200 200 200 200 200 200 429 429 429                        200 200 200 200 200 200 429 429 429
+2. a different creator, same address, sends 1              2. a different creator, same address, sends 1
+   200                                                        200
+3. creator 1 again, spelled three other ways               3. creator 1 again, spelled three other ways
+   200 200 200                                                429 429 429
+4. one script, a new creator_id on each of 9               4. one script, a new creator_id on each of 9
+   200 200 200 200 200 200 200 200 200                        200 200 200 200 200 200 200 200 200
+5. 9 requests with no creator_id                           5. 9 requests with no creator_id
+   200 200 200 200 200 200 429 429 429                        200 200 200 200 200 200 429 429 429
+6. a creator_id that is not a string, 1 request            6. a creator_id that is not a string, 1 request
+   429                                                        429
+```
+
+| Case | What it shows |
+|---|---|
+| 1 | The limit works per creator: the seventh request is the first 429. |
+| 2 | A second writer on the same address is unaffected. A per-address limit would have returned 429 here, because case 1 had already used that address's six. This is the one thing per-creator limits fix. (Inferred from case 1, not run separately.) |
+| 3 | **The fix.** Before it, `"  WRITER-A… "`, `"Writer-A…"` and `" writer-a…"` each got a fresh allowance, so changing capitalisation tripled the budget. After it, all three count against the original creator and get 429. |
+| 4 | **The weakness.** Nine requests with nine different ids all got 200. The limit counts whatever string the caller types, and anyone can type a new one. A per-address limit would have stopped this at six. I did not fix it (see below). |
+| 5 | With no id the address is counted, so the sixth request is the last that gets through. |
+| 6 | Returned 429 in both runs, but not because of its own count: a non-string id falls back to the address, and case 5 had already used up that address's six. It confirms that it shares the address bucket. |
+
+**What per-creator limits change:**
+
+- **Who it protects.** Writers who share an address (a household, a school, an office, a phone on a shared network) no longer use up each other's six submissions. This is the case where a per-address limit punishes the wrong person, and it matches the reason I gave in "Rate Limiting" for counting creators.
+- **Who it stops protecting against.** The scripted caller. A per-address limit holds a script to six requests a minute whatever it calls itself. A per-creator limit holds it to six per name, and it picks the names (case 4). This is the same thing the attack set already does: every row in `attacks.csv` gets its own `creator_id`, so it "looks like a crowd of different callers" and never trips a limit. The 429s in my flood run only appeared because that test used one id on purpose.
+- **What that does to my own argument.** In "Rate Limiting" I said my numbers should be "hostile" to a script mapping my thresholds. With per-creator counting they are not: a script that sends one request per fresh id is never limited, on the minute or the day cap, and can probe the thresholds as often as it likes. My numbers are liveable for the writer and not hostile to the script. I wrote that section before testing this.
+- **A smaller cost.** Callers with no id (or a non-string id) all share one bucket per address, so anonymous callers on one network get six a minute between them. A caller gains nothing by leaving the id out, which is the reason to keep the fallback.
+- **The daily cap has the same hole** as the minute cap, since it is keyed the same way.
+
+**What I'd do next (not done):** keep the per-creator limit and add a much looser per-address limit beside it, say 10 times the per-creator one, so a household has room but one machine inventing ids hits a wall. The real fix is to count something the caller can't choose, such as a signed-in account. I did not add the address backstop here because the stretch asked for per-creator limits, and the right number for it depends on how many writers share an address, which I haven't measured.
+
+**Limits of this test:** one run of each case from a single machine. It shows the behaviour of the key function, not how it holds up under load, and the counts are in memory, so restarting the service resets them. The "Rate Limiting" section above says 120 per day, but `config.py` has `RATE_LIMIT_PER_DAY = 100`. The code is what runs, so 100 is what applies, and the README number needs correcting.
+
+---
+
 ## What's Still Broken
 
 **Attacks still getting through (15 of 56 broke after the reweight):**
