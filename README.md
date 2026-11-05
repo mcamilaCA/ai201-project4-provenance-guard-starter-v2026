@@ -1097,6 +1097,31 @@ trial 1; trials 2 and 3 returned identical guesses.
 
 *Also seen.* MF08 (60,000 characters) is marked HELD, but it came back with no `warning` field. That is the same gap as the criterion 5 miss.
 
+**The pattern: nothing held across the board, and the misses collapse into three problems, not twenty.**
+
+I did not hold everything. Three of five criteria missed (2, 3, 5), one is unverified (4), and 16 of 56 attacks broke. Counting by the signal that moved the score:
+
+| Problem | Where it shows up | Stage |
+|---|---|---|
+| **1. Perplexity measures predictability, not authorship, and it errs in both directions.** | 10 of the 16 broken attacks. The 6 false positives (FP02 to FP07) fail because formal, templated or repetitive human text has low perplexity (`model_score` 0.74 to 0.88). EV01, EV04, EV05 and PI02 fail the other way: typos and odd words push perplexity up, so AI text reads as human (`model_score` as low as 0.16). It also explains why 2 of 5 clearly-human eval texts scored 0.75 and 0.83. | Signal one |
+| **2. The scores overlap, so no threshold can fix it.** | Formal human text (FP02 to FP07) scored 0.72 to 0.77 combined. The clearly-AI eval texts scored 0.69 to 0.74. The human texts score *higher*. Lowering `AI_THRESHOLD` below 0.65 accuses more writers, and raising it above 0.77 lets all the AI through. This is the same cause as the missed criteria 2 and 3, where the mean gap was 0.15 and the human label was never reached. | Combining rule, then the label mapping |
+| **3. Signal two is weak, and it agrees with signal one instead of checking it.** | Style scores were 0.51 to 0.58 on human and 0.55 to 0.61 on AI, so it barely separates anything. On the false positives it sat at 0.63 to 0.72 and joined the accusation, because uneven vocabulary and few varied punctuation marks are also what formal human text looks like. Three evasions (EV02, EV06, EV07) beat it with cheap edits. A 0.5/0.5 average of two signals that share the same blind spot gives no protection. | Signal two |
+
+Two smaller causes sit outside these three:
+- **The `MIN_WORDS` gate** (EV08, and the short bad-input cases). Both signals return 0.5 on short text. That is safe for humans, but short AI text can't be caught.
+- **Whole-text scoring** (EV09). A human paragraph pasted ahead of AI text dilutes it, and nothing scores sections separately.
+
+The best single fix is upstream of the thresholds. The false positives and the evasions are both caused by signal one reading predictability as authorship, so tuning the thresholds can't fix them. The second signal needs to measure something that doesn't move with register and padding.
+
+**Were my targets too low?** Not in the way the question suggests, since I missed three of them. But one target was too easy, and it is **criterion 1**.
+- It passed in all 3 trials at exactly 1 of 10, which is the limit with no margin.
+- Eight of those ten texts landed in "unsure", so the pass came from the system not committing, not from it recognising my writing.
+- The false-positive attacks show the real picture: 6 of 8 human texts were accused. The target held because my 10 texts were casual or ordinary writing, which signal one scores as human or unsure. It never faced the formal, non-native or templated writing that gets accused.
+- I would tighten it by changing the test population, not the number: at most 1 of 10 accused, where the 10 must include at least 4 in a formal register, a rubric style, or written by a non-native speaker.
+- By that standard, the current code would score 6 of 8, which is a clear miss.
+
+The original criterion 1 stays as written in `criteria.md`. The tightened version is added below it as a revision.
+
 
 
 ---

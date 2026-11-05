@@ -54,6 +54,20 @@ because the first signal runs a model and can't be perfect, but I count only
 the high-confidence label as an accusation, since "unsure" invites a closer
 look and doesn't blame anyone.
 
+> **Revised in unit 8:** Of 10 texts I wrote or collected as genuine human
+> writing, at most 1 receives the high-confidence AI label, in each of 3
+> trials. At least 4 of the 10 must be in a register the detector is likely to
+> misread: formal prose, writing to a rubric, a careful non-native speaker, or
+> deliberate repetition.
+>
+> **Why revised:** The original number was checkable, but the test set could
+> not fail it. My 10 texts were casual or ordinary, 8 of 10 landed in "unsure",
+> and the criterion passed at exactly 1 of 10 in all 3 trials. The attack run
+> then accused 6 of 8 formal or templated human texts (FP02 to FP07). A target
+> that passes while the system accuses 6 of 8 of the writers it most needs to
+> protect was not measuring what I meant. The limit of 1 in 10 is unchanged.
+> Only the population it is measured on changed.
+
 ---
 
 ## 2. Clearly-AI and clearly-human text score far apart
