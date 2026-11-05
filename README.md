@@ -587,18 +587,392 @@ In this case, I would go for the false positive, for example FP03. I believe it 
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1.  |  |  |  |  |  |
-| 2.  |  |  |  |  |  |
-| 3.  |  |  |  |  |  |
-| 4.  |  |  |  |  |  |
-| 5.  |  |  |  |  |  |
+| 1. False positives | Of 10 texts I wrote, at most 1 gets the high-confidence AI label, in each of 3 trials | 1 of 10 `ai` (8 unsure, 1 human) | 1 of 10 `ai` | 1 of 10 `ai` | **Met**, with no margin: it sits exactly at the limit every trial |
+| 2. Score spread | Over 5 clearly-AI and 5 clearly-human texts, mean AI score is at least 0.4 above mean human score, and the lowest AI score is above the highest human score, in each trial | Mean gap 0.15 (AI 0.71, human 0.56); lowest AI 0.688 vs highest human 0.678 | Same guesses as trial 1 | Same guesses as trial 1 | **Missed**: the 0.15 gap is well under 0.4. The no-overlap half held only by 0.01. |
+| 3. Label coverage | In a 12-text set (4 human, 4 AI, 4 borderline), each label appears at least twice and none covers more than 7 of 12 | human 0, ai 5, unsure 7 | human 0, ai 5, unsure 7 | human 0, ai 5, unsure 7 | **Missed**: the human label never appeared. Unsure was 7 of 12, exactly at the cap. |
+| 4. Appeals | 10 of 10 appeals set status to "under appeal" and are stored with a timestamp and the writer's explanation | not run | not run | not run | **Unverified**: `run_eval.py` does not exercise `/appeal`, so there is no evidence either way. |
+| 5. Bad input | Missing, empty and whitespace-only text return 400 with nothing stored; text over 50,000 characters returns 200 with a `warning` field and a full analysis. All 4 cases pass in each of 3 trials | 3 of 4: the three 400s passed, the long-text case returned 200 with no `warning` | 3 of 4 | 3 of 4 | **Missed**: `app.py` has no warning logic for long text. |
 
-**Real output from one trial**, pasted as text, naming the file and function
-that produced it:
+Combined scores in criterion 2 come from the printed signals, since the
+combining rule is a 0.5/0.5 average (`config.py`). I worked them out from
+trial 1; trials 2 and 3 returned identical guesses.
+
+**Real output, trial 1 of each criterion**, produced by `run_eval.py::main`, which sends each text to `app.py::submit` (POST /submit) and records the response. The file is `results/run_2026-11-04_2116_before.md`. The `sent` field is the first 70 characters of the text submitted.
+
+**1. False positives (own writing)**
 
 ```json
-
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.131,
+    "model_score": 0.4578,
+    "style_score": 0.6731,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": " When looking at Mi Youren's painting and more so the mountains, we se"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0046,
+    "model_score": 0.338,
+    "style_score": 0.6666,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "As a computer science major, witnessing the city's recreation through "
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4786,
+    "model_score": 0.8102,
+    "style_score": 0.6684,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "When enrolling in college classes, it can be difficult to find the bes"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.134,
+    "model_score": 0.5796,
+    "style_score": 0.5543,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "We will be using Support Vector Machine (SVM). Some of the reasons why"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.1802,
+    "model_score": 0.2045,
+    "style_score": 0.6153,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "By analysing propositions and deciphering their values AI can be able "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.1074,
+    "model_score": 0.5116,
+    "style_score": 0.5958,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "In my opinion, to understand and comprehend something, you need to que"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0444,
+    "model_score": 0.4953,
+    "style_score": 0.5492,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "are people comfortable not being perfect around you? Meaning, are they"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0,
+    "model_score": 0.5,
+    "style_score": 0.5,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "To be able to know your boundaries because of how deeply you understan"
+  },
+  {
+    "status": 200,
+    "guess": "human",
+    "confidence": 0.3934,
+    "model_score": 0.1275,
+    "style_score": 0.4791,
+    "label": "We think this was probably written by a person.",
+    "sent": "I am a living controversy: so complicated yet so simple; sometimes com"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0,
+    "model_score": 0.5,
+    "style_score": 0.5,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Feeling stuck is a symptom of waiting for \u201csomething\u201d to finally happe"
+  }
+]
 ```
+
+**2. Score spread: clearly human**
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.1444,
+    "model_score": 0.5635,
+    "style_score": 0.5809,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "ugh don't even get me started on my landlord. he said he'd fix the hea"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0932,
+    "model_score": 0.3848,
+    "style_score": 0.5219,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Went to my cousin's wedding Saturday and the best moment was when the "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.079,
+    "model_score": 0.3942,
+    "style_score": 0.5268,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Quick update on the fence: the guy came, measured everything wrong, an"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.2624,
+    "model_score": 0.7489,
+    "style_score": 0.5135,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "When I was nine I broke my arm falling out of the apple tree behind ou"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.3566,
+    "model_score": 0.832,
+    "style_score": 0.5246,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Look, I'm not saying the movie was bad, I'm saying it was two and a ha"
+  }
+]
+```
+
+**2. Score spread: clearly AI**
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4136,
+    "model_score": 0.8126,
+    "style_score": 0.601,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "In today's fast-paced digital landscape, effective time management has"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.3758,
+    "model_score": 0.7631,
+    "style_score": 0.6126,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Artificial intelligence is a transformative technology that is reshapi"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4598,
+    "model_score": 0.9103,
+    "style_score": 0.5495,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Climate change represents one of the most pressing challenges of our t"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4736,
+    "model_score": 0.8613,
+    "style_score": 0.6123,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Maintaining a healthy lifestyle involves a holistic approach that enco"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.3894,
+    "model_score": 0.7907,
+    "style_score": 0.5987,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Effective communication is a cornerstone of successful teamwork. It fo"
+  }
+]
+```
+
+**3. Label coverage: human set**
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.1344,
+    "model_score": 0.5409,
+    "style_score": 0.5934,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "my sister called at 11pm to tell me she got the job and i literally sc"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0154,
+    "model_score": 0.5442,
+    "style_score": 0.4712,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Not gonna lie, the hike was harder than the website made it sound. Two"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.1564,
+    "model_score": 0.3932,
+    "style_score": 0.4504,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Update on the sourdough: it's alive!! After two failed attempts I fina"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.264,
+    "model_score": 0.6733,
+    "style_score": 0.5906,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "I keep rewriting the first paragraph of this essay and it keeps gettin"
+  }
+]
+```
+
+**3. Label coverage: AI set**
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4514,
+    "model_score": 0.8558,
+    "style_score": 0.5955,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Sustainable urban development requires a comprehensive strategy that i"
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.282,
+    "model_score": 0.6574,
+    "style_score": 0.6245,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Remote work has fundamentally changed the modern workplace, offering f"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4764,
+    "model_score": 0.8554,
+    "style_score": 0.6209,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Education plays a pivotal role in shaping individuals and societies. A"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.4414,
+    "model_score": 0.8785,
+    "style_score": 0.5628,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "Cybersecurity has emerged as a critical priority for organizations of "
+  }
+]
+```
+
+**3. Label coverage: borderline set**
+
+```json
+[
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.16,
+    "model_score": 0.5378,
+    "style_score": 0.6222,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "The committee reviewed the proposal in detail and concluded that, whil"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.3084,
+    "model_score": 0.7241,
+    "style_score": 0.5844,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "I believe remote work has real benefits, though it isn't for everyone."
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.2436,
+    "model_score": 0.666,
+    "style_score": 0.5775,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "Over the past decade, the local library has become more than a place t"
+  },
+  {
+    "status": 200,
+    "guess": "ai",
+    "confidence": 0.3924,
+    "model_score": 0.7586,
+    "style_score": 0.6337,
+    "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+    "sent": "When approaching a new codebase, I find it helpful to start with the t"
+  }
+]
+```
+
+**5. Bad input**
+
+```json
+[
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "{\"creator_id\": \"eval_bad_missing\"}"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "(empty text)"
+  },
+  {
+    "status": 400,
+    "guess": null,
+    "confidence": null,
+    "model_score": null,
+    "style_score": null,
+    "label": null,
+    "sent": "   \n\t  "
+  },
+  {
+    "status": 200,
+    "guess": "unsure",
+    "confidence": 0.0,
+    "model_score": 0.5,
+    "style_score": 0.5,
+    "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+    "sent": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+]
+```
+
+**4. Appeals:** no output, because `run_eval.py` does not call `/appeal`.
 
 **Diagnoses**
 
@@ -615,6 +989,29 @@ that produced it:
                         signal at 0.6, so it dragged the whole score down."
 
      Look for a pattern. Five failures on one signal is one problem, not five. -->
+
+**Eval misses (criteria 2, 3, 5)**
+
+- **Criteria 2 and 3 are one problem: the model signal is too weak, and the
+  style signal does not separate the classes at all.** Clearly-human texts get
+  style scores of 0.51 to 0.58 and clearly-AI texts get 0.55 to 0.61, so the
+  style signal moves the average by about 0.03. The model signal has the
+  spread (AI 0.76 to 0.91) but it also scored two clearly-human texts at 0.75
+  and 0.83. Because the combining rule averages 0.5/0.5, a style signal stuck
+  near 0.55 pulls every combined score toward the middle. That squeezes
+  scores into roughly 0.45 to 0.74. With `HUMAN_THRESHOLD = 0.35`, almost
+  nothing can drop below the human line, so the human label is never reached.
+  Stage at fault: signal two, then the combining rule.
+- **Criterion 1 passes only because the 8 other texts land in "unsure".** The
+  one accused text had a model score of 0.81, which is the same model-signal
+  weakness. This is a pass I would not trust.
+- **Criterion 5: the long-text case was never implemented.** `app.py::submit`
+  rejects empty input but has no length check and no `warning` field. The
+  all-`a` input came back with scores of exactly 0.5 and 0.5, so the
+  signals appear to have no usable signal on degenerate text. Stage at
+  fault: the route.
+- **Criterion 4** needs an appeal test added to `run_eval.py` before it can
+  get a verdict.
 
 
 
