@@ -356,24 +356,51 @@ $ curl "http://127.0.0.1:5000/log"
 
 ## Rate Limiting
 
-**My limits:** ___ per minute, ___ per day
+**My limits:** __6_ per minute, _120__ per day
 
 **Why those numbers and not others:**
 <!-- Think about two people: a real writer submitting their own work a few
      times an hour, and a script sending a thousand variations to map your
      thresholds. Your numbers have to be liveable for the first and hostile to
      the second. -->
+     I believe a writter, if and when editting, might make small changes which take less than a minute to fix, which is why I selected 6. Especially in case they are adding small punctuation marks, or maybe double checking spelling. I believe if you change your text more than 6 times in one same minute (which is around 10 seconds for change and submitting), you might be using an AI helper, no human uses that little time to think and correct oneself
 
-**What a caller counts as:** <!-- per address, or per creator_id? They fail
-differently — one script can look like a thousand callers, and one household
-can look like one. -->
+     In terms of 120 per day, writing is a hard skill, and unless you are dedicating a whole day to submit, you most likely need to tend to you job, and other needs. Again, if you are submitting too many times and too little time, it might indicate some AI usage.
+
+**What a caller counts as:** <!-- per address, or per creator_id? They fail differently — one script can look like a thousand callers, and one household can look like one. -->
+
+A caller should be a same creator id, since several creators might share the same address when submiting and hence it is not a good standard for checking individuality. Moreover, if using creator id AND address, it would not count once a user has moved an is uploading under their same account, hence it would still be useless. However, if any time your same alias (in this case creator_id) is being used, it means you are the same creator. 
 
 **The run of status codes when I pushed past it:**
 
 <!-- python run_attacks.py --flood 15 -->
 
 ```
+15 submissions as 'flood_tester' against http://127.0.0.1:5000
+The first one is slow while the model loads.
 
+  [ 1/15] 200
+  [ 2/15] 200
+  [ 3/15] 200
+  [ 4/15] 200
+  [ 5/15] 200
+  [ 6/15] 200
+  [ 7/15] 429
+  [ 8/15] 429
+  [ 9/15] 429
+  [10/15] 429
+  [11/15] 429
+  [12/15] 429
+  [13/15] 429
+  [14/15] 429
+  [15/15] 429
+
+============================================================
+200 200 200 200 200 200 429 429 429 429 429 429 429 429 429
+============================================================
+
+9 of 15 were rate limited. Paste the run above into your README
+under **Rate Limiting**, and check GET /log recorded the rejections.
 ```
 
 ---
@@ -389,13 +416,167 @@ can look like one. -->
 
 <!-- Choose entries that show the interesting failures, not the ten easiest. -->
 
-```json
+### PI02 — `prompt_injection`
 
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "82f7e795-a26e-4935-8e64-0788d1873c8a",
+  "creator_id": "attacker_PI02",
+  "guess": "human",
+  "model_score": 0.1576,
+  "style_score": 0.507,
+  "combined_score": 0.3323,
+  "label": "We think this was probably written by a person.",
+  "status": "decided"
+}
+```
+
+### EV04 — `evasion`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "22f98ab5-54df-4421-89fa-8e41582442d2",
+  "creator_id": "attacker_EV04",
+  "guess": "unsure",
+  "model_score": 0.6114,
+  "style_score": 0.6474,
+  "combined_score": 0.6294,
+  "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+  "status": "decided"
+}
+```
+
+### EV07 — `evasion`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "2338a9c1-309a-4b54-86e4-75c4a3ce84ae",
+  "creator_id": "attacker_EV07",
+  "guess": "unsure",
+  "model_score": 0.6278,
+  "style_score": 0.5313,
+  "combined_score": 0.5796,
+  "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+  "status": "decided"
+}
+```
+
+### EV08 — `evasion`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "3ee54403-090a-4221-9a52-5a14aaa113fa",
+  "creator_id": "attacker_EV08",
+  "guess": "unsure",
+  "model_score": 0.5,
+  "style_score": 0.5,
+  "combined_score": 0.5,
+  "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+  "status": "decided"
+}
+```
+
+### EV09 — `evasion`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "e8473f6e-18a1-4238-8406-9f8d37de71d4",
+  "creator_id": "attacker_EV09",
+  "guess": "unsure",
+  "model_score": 0.6834,
+  "style_score": 0.5727,
+  "combined_score": 0.628,
+  "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+  "status": "decided"
+}
+```
+
+### FP02 — `false_positive`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "8e7955ee-4d60-45de-834f-fa753e186014",
+  "creator_id": "attacker_FP02",
+  "guess": "ai",
+  "model_score": 0.7387,
+  "style_score": 0.701,
+  "combined_score": 0.7198,
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "status": "decided"
+}
+```
+
+### FP03 — `false_positive`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "ea6f2f81-0ff9-4bac-880c-731a1976c44f",
+  "creator_id": "attacker_FP03",
+  "guess": "ai",
+  "model_score": 0.8051,
+  "style_score": 0.6861,
+  "combined_score": 0.7456,
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "status": "decided"
+}
+```
+
+### FP06 — `false_positive`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "0cbfcc13-6f5f-48de-b246-a7903c82f4a0",
+  "creator_id": "attacker_FP06",
+  "guess": "ai",
+  "model_score": 0.8814,
+  "style_score": 0.6294,
+  "combined_score": 0.7554,
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "status": "decided"
+}
+```
+
+### FP07 — `false_positive`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:07+00:00",
+  "content_id": "16d58783-807c-47a8-a0f2-f5254194bded",
+  "creator_id": "attacker_FP07",
+  "guess": "ai",
+  "model_score": 0.8816,
+  "style_score": 0.6624,
+  "combined_score": 0.772,
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "status": "decided"
+}
+```
+
+### RQ11 — `malformed`
+
+```json
+{
+  "timestamp": "2026-11-05T00:11:08+00:00",
+  "creator_id": "unknown",
+  "event": "rejected",
+  "status": "rejected",
+  "reason": "rate_limited",
+  "limit": "6 per 1 minute"
+}
 ```
 
 **The single worst outcome** — the one I'd least want to explain to a writer
 whose work got caught by it:
 
+In this case, I would go for the false positive, for example FP03. I believe it a huge failure to automatically asume non-native speakers are AI simply because they are doing their best in a language that is not even the one(s) they are used to using. Or a native speaker, telling them that their way of expressing themselves is "not really human" or "not human enough" and can be mixed up with a system that imitates instead of feeling.
 
 
 ---
