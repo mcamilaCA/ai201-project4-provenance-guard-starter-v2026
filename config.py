@@ -65,11 +65,12 @@ VERIFY_WINDOW_SECONDS = 600
 # ─── Scoring (Milestone 4) ───────────────────────────────────────────────────
 # How much each signal counts toward the combined score.
 #
-# Equal weights: neither signal has earned more trust yet (see the README's
-# "The combining rule"). If you change them, change the README too.
+# Reweighted in unit 8 (see the README's "The Improvement"): the model signal
+# went from 0.5 to 0.3 because low perplexity also describes careful, formal
+# writing by non-native English speakers. If you change them, change the README too.
 
-WEIGHT_MODEL_SIGNAL = 0.5
-WEIGHT_STYLE_SIGNAL = 0.5
+WEIGHT_MODEL_SIGNAL = 0.3
+WEIGHT_STYLE_SIGNAL = 0.7
 
 
 # ─── Thresholds (Milestone 5) ────────────────────────────────────────────────

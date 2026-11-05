@@ -130,7 +130,7 @@ Layout exaggerated the gap, but the reversal is still there: the AI poem is stil
 
 **The rule:** A weighted average of the two scores, both on the same scale (higher = more likely AI). I don't resolve a disagreement in favour of either signal: when one says AI and the other says human, the average lands between them, in the unsure band, because two methods disagreeing is itself uncertainty. Text under 40 words never reaches this point with an opinion, because both signals return 0.5 for it (see "A failure I found" above), so the combined score is 0.5 and the label is unsure.
 
-**The numbers:** `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5` in `config.py`. Equal, because neither signal has earned more trust: the model signal was fooled by a rhymed poem, and the style signal is built on three crude measures with bounds I guessed rather than tuned. The score is rounded to 4 places. `confidence` in the response is `abs(combined_score - 0.5) * 2`: 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
+**The numbers:** *(Superseded in unit 8: the weights are now 0.3 and 0.7, see "The Improvement". The measurements in this section were taken at 0.5/0.5.)* `WEIGHT_MODEL_SIGNAL = 0.5`, `WEIGHT_STYLE_SIGNAL = 0.5` in `config.py`. Equal, because neither signal has earned more trust: the model signal was fooled by a rhymed poem, and the style signal is built on three crude measures with bounds I guessed rather than tuned. The score is rounded to 4 places. `confidence` in the response is `abs(combined_score - 0.5) * 2`: 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
 
 **Where it lives:** `scoring.py::combine_signals`
 
@@ -1128,37 +1128,106 @@ The original criterion 1 stays as written in `criteria.md`. The tightened versio
 
 ## The Improvement
 
-**What I changed:**
+**What I changed:** I reweighted the signals. The model signal (perplexity) now counts for **0.3 instead of 0.5**, a cut of 0.2 (40% of its old weight), and the style signal counts for **0.7 instead of 0.5**. Only two numbers changed, in `config.py`: `WEIGHT_MODEL_SIGNAL = 0.3` and `WEIGHT_STYLE_SIGNAL = 0.7`. The rule in `scoring.py::combine_signals` is the same weighted average, and neither signal's own code changed. The goal was to stop a writer from being accused just because their English is careful and plain, which is what a non-native speaker often produces.
 
-**Which diagnosis pointed at it:**
+**Which diagnosis pointed at it:** Problem 1 in the diagnosis table: perplexity measures predictability, not authorship. FP03 (a non-native speaker writing carefully) got `model_score` 0.805, and the other formal or templated human texts got 0.74 to 0.88. The model signal was the larger driver of those accusations, so I turned it down.
+
+**Why 0.3 and not lower.** I recomputed combined scores from the `model_score` and `style_score` values in `logs/audit.jsonl`, using the weights I was testing. Going below 0.3 starts to cost real AI detection. The 9 clearly-AI eval texts I could check (the clearly-AI and AI label-coverage sets) combined at 0.656 to 0.691 at 0.3, still above the 0.65 line but only just. The one that was already unsure stays unsure. At 0.2 they would sit around 0.62 to 0.66 and most would drop out. So 0.3 is about the lowest weight that keeps the AI texts I tested labelled "ai".
 
 ### Attack Run — After
 
-<!-- Same format. `run_attacks.py --label after` -->
+Run with `python run_attacks.py --set /Users/camila/Downloads/attack_set --label after` against the service with the new 0.3/0.7 weights (`results/attack_run_2026-11-05_1645_after.md`, eval run in `results/run_2026-11-05_1646_after.md`). The "after" combined scores below come from the audit log of that run and match what I had predicted by recomputing the old scores, to four places. The tool's own "Score" column holds confidence, not the combined score, so I did not use it. The service again had no 5xx or crash.
 
+**Result: 15 broke (was 16), 40 held (was 39), 1 inconclusive (unchanged).** The only attack whose verdict changed is PI02.
 
+| ID | Targeting | Combined before (0.5/0.5) | Combined after (0.3/0.7) | Guess before → after | Verdict before → after |
+|---|---|---|---|---|---|
+| EV01 | typos | 0.407 | 0.505 | unsure → unsure | BROKE → BROKE |
+| EV02 | broken-up sentences | 0.554 | 0.539 | unsure → unsure | BROKE → BROKE |
+| EV03 | pasted quotation | 0.625 | 0.608 | unsure → unsure | BROKE → BROKE |
+| EV04 | unusual words | 0.629 | 0.637 | unsure → unsure | BROKE → BROKE |
+| EV05 | heavy human editing | 0.437 | 0.484 | unsure → unsure | BROKE → BROKE |
+| EV06 | one very long, one very short sentence | 0.519 | 0.497 | unsure → unsure | BROKE → BROKE |
+| EV07 | punctuation padding | 0.580 | 0.560 | unsure → unsure | BROKE → BROKE |
+| EV08 | text below token window | 0.500 | 0.500 | unsure → unsure | BROKE → BROKE |
+| EV09 | human opening bolted on | 0.628 | 0.606 | unsure → unsure | BROKE → BROKE |
+| EV10 | repeated stanza structure | 0.917 | 0.893 | ai → ai | HELD → HELD |
+| FP01 | plain, clear human writing | 0.635 | 0.642 | unsure → unsure | HELD → HELD |
+| FP02 | formal register | 0.720 | 0.712 | ai → ai | BROKE → BROKE |
+| FP03 | non-native speaker, careful | 0.746 | 0.722 | ai → ai | BROKE → BROKE |
+| FP04 | student essay to a rubric | 0.736 | 0.697 | ai → ai | BROKE → BROKE |
+| FP05 | technical documentation | 0.762 | 0.747 | ai → ai | BROKE → BROKE |
+| FP06 | imitating a formal template | 0.755 | 0.705 | ai → ai | BROKE → BROKE |
+| FP07 | deliberate repeated phrase | 0.772 | 0.728 | ai → ai | BROKE → BROKE |
+| FP08 | very short human text | 0.500 | 0.500 | unsure → unsure | HELD → HELD |
+| PI01 | ignore-the-check instruction | 0.502 | 0.518 | unsure → unsure | HELD → HELD |
+| PI02 | system-message instruction + odd-word padding | 0.332 | 0.402 | **human → unsure** | **BROKE → HELD** |
+| PI03 | instruction in the writer's voice | 0.540 | 0.542 | unsure → unsure | HELD → HELD |
+| PI04 | hostile label text | 0.536 | 0.550 | unsure → unsure | HELD → HELD |
+| PI05 | audit log injection | 0.500 | 0.500 | unsure → unsure | HELD → HELD |
+| PI06 | instruction plus real human text | 0.589 | 0.612 | unsure → unsure | HELD → HELD |
+| MF08 | 60,000 characters | 0.823 | 0.757 | ai → ai | HELD → HELD |
 
-**Did it help, and how do I know:**
+The other 30 attacks (MF01 to MF07, RQ01 to RQ12, FL01_01 to FL01_12) returned the same status and guess as before: the same 400s, the same 0.500 "unsure" results, and the flood blocked from the seventh request. RQ11 was rate-limited (429) again because the run sends 56 requests close together, so it is still INCONCLUSIVE and has to be rerun on its own.
 
-<!-- Widening the unsure band usually fixes one problem and creates another.
-     Reporting that trade honestly is worth full credit. -->
+### Eval run — before and after
 
+Same `run_eval.py`, three trials each, and all three trials returned identical guesses both times. Combined scores are `0.5 × model + 0.5 × style` before and `0.3 × model + 0.7 × style` after, computed from the `model_score` and `style_score` in each response (the signal scores themselves did not change).
 
+| Criterion | Before (0.5/0.5) | After (0.3/0.7) | Verdict before → after |
+|---|---|---|---|
+| 1. False positives, 10 own texts | 1 `ai`, 8 unsure, 1 human | 1 `ai`, **9 unsure, 0 human** | Met at the limit → Met at the limit |
+| 2. Score spread, mean gap (target 0.4) | AI 0.71, human 0.56, **gap 0.15**. Lowest AI 0.688, highest human 0.678 (margin 0.01) | AI 0.665, human 0.549, **gap 0.116**. Lowest AI 0.656, highest human 0.617 (margin 0.039) | Missed → Missed |
+| 3. Label coverage (12 texts) | human 0, ai 5, unsure 7 | human 0, **ai 4, unsure 8** | Missed (unsure at the 7 cap) → **Missed on two counts (unsure now over the cap)** |
+| 4. Appeals | not run | not run | Unverified → Unverified |
+| 5. Bad input | 3 of 4 (no `warning` on long text) | 3 of 4 | Missed → Missed |
+
+Per-text guesses for the sets that moved, trial 1 (after combined score in brackets):
+
+| Set | Before | After |
+|---|---|---|
+| Own writing | unsure ×8, ai ×1, human ×1 (the "living controversy" text, 0.323) | unsure ×9, ai ×1 (the same text is now unsure, 0.374) |
+| Clearly human | unsure, unsure, unsure, unsure, ai | unsure ×5 (0.576, 0.481, 0.487, 0.584, 0.617) |
+| Clearly AI | ai ×5 | ai ×5 (0.664, 0.658, 0.658, 0.687, 0.656) |
+| Label set: human | unsure ×4 | unsure ×4 (0.578, 0.493, 0.433, 0.615) |
+| Label set: AI | ai, unsure, ai, ai | ai, unsure, ai, ai (0.674, 0.634, 0.691, 0.658) |
+| Label set: borderline | unsure, ai, unsure, ai | unsure, **unsure**, unsure, ai (0.597, 0.626, 0.604, 0.671) |
+
+**Did it help, and how do I know:** **No, not for the goal I set, and it made two other things slightly worse.**
+
+- **The false positives did not move.** FP02 to FP07 were "ai" before and are "ai" after, and FP03, the non-native speaker, went from 0.746 to 0.722 and is still labelled "ai", 0.07 over the line. The weights moved their scores by 0.008 to 0.050 and the label never changed. This is the result I flagged before the run: on these texts the style signal also reads as AI (0.63 to 0.72), so shifting weight onto it replaces one accusing score with another. A weighted average cannot turn two agreeing signals into a disagreement.
+- **The one gain is on the evasion side.** PI02 no longer reaches the "human" label (0.332 → 0.402, now "unsure"), and the attack count goes from 16 to 15. That happened because the signal that padding fools now counts for less. It is not a fairness fix.
+- **The trade it created.** Clean AI text lost margin: clearly-AI eval texts went from 0.69 to 0.74 down to 0.656 to 0.687, which is 0.006 to 0.037 above the 0.65 line. The score spread shrank (gap 0.15 → 0.116), because the signal that separates the two classes best now counts for less and the flatter one counts for more.
+- **Two eval changes.** The borderline text that had been labelled "ai" at 0.7241 on the model signal is now "unsure" (0.626), so label coverage changed from `ai 5, unsure 7` to `ai 4, unsure 8`, and "unsure" is now over the cap of 7 of 12. The one human-labelled own-writing text also became "unsure", so the "human" label now appears nowhere in the eval at all. Criterion 2's no-overlap margin did get better (0.01 → 0.039), since human texts with high model scores were discounted.
+- **Net:** one attack fixed, zero false positives fixed, the human label gone from the eval, and AI text closer to slipping under the line. I am keeping 0.3/0.7 because it has the one real gain and the AI texts I tested still land at "ai", but I would not call this the fix for non-native writers.
 
 ---
 
 ## What's Still Broken
 
-<!-- For each attack still getting through and each criterion still missed:
-     what you'd do, and why you stopped. -->
+**Attacks still getting through (15 of 56 broke after the reweight):**
 
+| Attacks | What's wrong | What I'd do | Why I stopped |
+|---|---|---|---|
+| **FP02 to FP07** (6 false positives, including FP03, the non-native speaker) | Formal, templated or repetitive human text is predictable to GPT-2 and has even sentences, so both signals say "ai" (combined 0.70 to 0.75 after the reweight). | Stop letting two correlated signals agree their way to an accusation. Options: add a signal that doesn't move with register (for example, how a text compares with the same writer's earlier submissions), or require that a text score "ai" on a measure other than predictability before the label can be "ai". A cheaper stopgap is raising `AI_THRESHOLD` above about 0.75, which would stop all six but also lets almost all the AI text I tested through (0.66 to 0.69). | A new signal is a new component with its own blind spot and needs its own test set, and I only had time for one improvement. The reweight was the change I could make and measure in one pass, and it showed that a weight cannot fix this. |
+| **EV01 to EV07, EV09** (8 evasions) | Typos, rare words, broken-up sentences, pasted quotations and punctuation padding each move one signal by enough to push clean AI text (0.66 to 0.69) under 0.65. The margin is 0.04 or less, so almost any edit works. | Widen the margin by making each signal harder to move: normalise punctuation before measuring it, ignore quoted passages, and score paragraphs separately so a human opening can't dilute AI text (EV09). | Each of those is a separate fix to signal two or to the route, and each one would also change how honest human text scores. I did not want to change several things at once and not know which one helped. |
+| **EV08** (short AI text) | Under 40 words both signals return 0.5, so short AI text is never caught. | Nothing I'd change. | This is the `MIN_WORDS` trade from the poem failure: with fewer than 40 words the signals can't tell a person from an AI, and an honest "unsure" is better than a guess. |
+| **RQ11** | Rate-limited (429) before it was analysed, so it is still inconclusive. | Rerun it alone. | It needs a quiet minute, and nothing suggests the route is at fault. |
+| **MF08** (60,000 characters) | Handled, but returns no `warning` field. | Add the length check and `warning` to `app.py::submit`. | Same gap as the criterion 5 miss. It is a small route change that I left alone because it doesn't touch the accusation problem. |
 
+**Criteria still missed:**
+
+- **Criterion 1 (false positives):** met at exactly 1 of 10, with no margin, and it only passes because 9 of the 10 land in "unsure". The 6 of 8 false-positive attacks show what it would score on formal or non-native writing. I'd tighten it by test population (at least 4 of the 10 formal, rubric-style or non-native) before trusting it.
+- **Criterion 2 (score spread):** gap 0.116 against a target of 0.4. The two signals together can't separate the classes by that much, because the best one (model) is also the one that accuses formal human text. Getting there needs a better signal, not a better weight.
+- **Criterion 3 (label coverage):** the "human" label never appears and "unsure" is now 8 of 12, over the cap. The reweight made this worse. At the current 0.35 `HUMAN_THRESHOLD`, human text would need a combined score below 0.35, and the lowest I saw on any human-written text was 0.374 (and 0.43 to 0.49 on the others I checked). I'd fix the signals first and then revisit the thresholds, because lowering `HUMAN_THRESHOLD` alone would label AI text "human".
+- **Criterion 4 (appeals):** unverified. `run_eval.py` never calls `/appeal`. I'd add 10 appeals to the eval and check status and timestamps. I stopped because it was outside the one improvement.
+- **Criterion 5 (bad input):** 3 of 4. The long-text `warning` was never implemented (see MF08).
+
+**What the reweight taught me:** a weight can only move a combined score between the two signal scores. When both signals are wrong in the same direction, as on formal or non-native writing, no weighting helps. I should have checked whether the signals agreed on the false positives before choosing a reweight as the improvement. My own diagnosis table said signal two "agrees with signal one instead of checking it", and that predicted this result.
 
 **The trade I'd make if this ran for real:**
 
-<!-- Two sentences. Fewer wrong accusations means more AI text getting through.
-     Say which way you'd go and WHO PAYS FOR IT. -->
-
+I'd go toward fewer wrong accusations: keep the "ai" label hard to earn, raise `AI_THRESHOLD`, and accept that more AI text lands in "unsure" or gets through. The cost is paid by whoever relies on the check: a reader or reviewer who has to treat "unsure" as "unknown" and look at the text themselves, because a false "ai" label lands on a writer, often a non-native speaker, who has to prove they wrote their own words.
 
 
 <!-- ═════════════════════════════════════════════════════════════════════
