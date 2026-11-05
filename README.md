@@ -407,10 +407,66 @@ under **Rate Limiting**, and check GET /log recorded the rejections.
 
 ## Attack Run — Before
 
-<!-- Every attack with its outcome and a held-or-broke mark.
-     `run_attacks.py --label before` produces the table. -->
+56 attacks: **39 held, 16 broke, 1 inconclusive**. The service had no 5xx or crash. "Combined" is the 0.5/0.5 average of the two signals, worked out from the per-attack JSON. It is blank where the request was rejected (400 or 429).
 
-
+| ID | Family | Targeting | Status | Guess | Combined | Verdict | Why |
+|---|---|---|---|---|---|---|---|
+| EV01 | evasion | signal two: typos raise word variety | 200 | unsure | 0.407 | BROKE | AI text slipped to unsure |
+| EV02 | evasion | signal two: broken-up sentences raise length spread | 200 | unsure | 0.554 | BROKE | AI text slipped to unsure |
+| EV03 | evasion | signal two: a pasted quotation changes the shape | 200 | unsure | 0.625 | BROKE | AI text slipped to unsure |
+| EV04 | evasion | signal one: unusual words raise perplexity | 200 | unsure | 0.629 | BROKE | AI text slipped to unsure |
+| EV05 | evasion | both signals: heavy human editing pass | 200 | unsure | 0.437 | BROKE | AI text slipped to unsure |
+| EV06 | evasion | signal two: one very long sentence and one very short | 200 | unsure | 0.519 | BROKE | AI text slipped to unsure |
+| EV07 | evasion | signal two: padding with punctuation | 200 | unsure | 0.580 | BROKE | AI text slipped to unsure |
+| EV08 | evasion | signal one: text below the token window | 200 | unsure | 0.500 | BROKE | Text below token window scores 0.5 |
+| EV09 | evasion | both: AI text with a human opening paragraph bolted on | 200 | unsure | 0.628 | BROKE | AI text slipped to unsure |
+| EV10 | evasion | signal two: repeated stanza structure | 200 | ai | 0.917 | HELD | Caught as ai (0.83) |
+| FP01 | false_positive | plain, clear human writing with no flourishes | 200 | unsure | 0.635 | HELD | Human not accused |
+| FP02 | false_positive | human writing in a formal register | 200 | ai | 0.720 | BROKE | Real human writing labeled ai |
+| FP03 | false_positive | a non-native English speaker writing carefully | 200 | ai | 0.746 | BROKE | Real human writing labeled ai |
+| FP04 | false_positive | a student essay written to a rubric | 200 | ai | 0.736 | BROKE | Real human writing labeled ai |
+| FP05 | false_positive | technical documentation written by a person | 200 | ai | 0.762 | BROKE | Real human writing labeled ai |
+| FP06 | false_positive | a person imitating a formal template | 200 | ai | 0.755 | BROKE | Real human writing labeled ai |
+| FP07 | false_positive | human writing that repeats a phrase deliberately | 200 | ai | 0.772 | BROKE | Real human writing labeled ai |
+| FP08 | false_positive | very short genuine human submission | 200 | unsure | 0.500 | HELD | Human not accused |
+| PI01 | prompt_injection | instruction to ignore the check | 200 | unsure | 0.502 | HELD | Instruction ignored; stays unsure |
+| PI02 | prompt_injection | instruction disguised as a system message | 200 | human | 0.332 | BROKE | Odd-word padding lowered score to human |
+| PI03 | prompt_injection | instruction wrapped in the writer's voice | 200 | unsure | 0.540 | HELD | Instruction ignored; stays unsure |
+| PI04 | prompt_injection | attempt to make the label text hostile | 200 | unsure | 0.536 | HELD | Fixed label; human text not accused |
+| PI05 | prompt_injection | attempt to inject into the audit log | 200 | unsure | 0.500 | HELD | Audit log stayed intact |
+| PI06 | prompt_injection | instruction plus real human text | 200 | unsure | 0.589 | HELD | Fixed label; human text not accused |
+| MF01 | malformed | text is only whitespace | 400 | — | — | HELD | Clean 400 rejection |
+| MF02 | malformed | text is a single character | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF03 | malformed | text is control characters | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF04 | malformed | text is only punctuation | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF05 | malformed | text is a very long single word | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF06 | malformed | text is emoji only | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF07 | malformed | text is right-to-left script | 200 | unsure | 0.500 | HELD | No crash; safe unsure |
+| MF08 | malformed | text is 60,000 characters | 200 | ai | 0.823 | HELD | Handled 60,000 characters |
+| RQ01 | malformed | no text field at all | 400 | — | — | HELD | Clean 400 rejection |
+| RQ02 | malformed | no creator_id | 200 | unsure | 0.500 | HELD | Safe fallback to unknown creator |
+| RQ03 | malformed | text is a number | 400 | — | — | HELD | Clean 400 rejection |
+| RQ04 | malformed | text is a list | 400 | — | — | HELD | Clean 400 rejection |
+| RQ05 | malformed | text is null | 400 | — | — | HELD | Clean 400 rejection |
+| RQ06 | malformed | creator_id is an object | 200 | unsure | 0.500 | HELD | Safe fallback to unknown creator |
+| RQ07 | malformed | body is a JSON array, not an object | 400 | — | — | HELD | Clean 400 rejection |
+| RQ08 | malformed | body is unparseable JSON | 400 | — | — | HELD | Clean 400 rejection |
+| RQ09 | malformed | body is empty | 400 | — | — | HELD | Clean 400 rejection |
+| RQ10 | malformed | body is form-encoded, not JSON | 400 | — | — | HELD | Clean 400 rejection |
+| RQ11 | malformed | body is JSON claiming to be plain text | 429 | — | — | INCONCLUSIVE | Rate limiter fired first; rerun alone |
+| RQ12 | malformed | deeply nested JSON | 400 | — | — | HELD | Clean 400 rejection |
+| FL01_01 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_02 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_03 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_04 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_05 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_06 | flood_same_creator | 20 rapid submissions from one creator | 200 | unsure | 0.500 | HELD | Allowed within the limit |
+| FL01_07 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
+| FL01_08 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
+| FL01_09 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
+| FL01_10 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
+| FL01_11 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
+| FL01_12 | flood_same_creator | 20 rapid submissions from one creator | 429 | — | — | HELD | Blocked with 429 |
 
 **Ten audit log entries from the run**
 
@@ -1012,6 +1068,34 @@ trial 1; trials 2 and 3 returned identical guesses.
   fault: the route.
 - **Criterion 4** needs an appeal test added to `run_eval.py` before it can
   get a verdict.
+
+**Attack run: 16 of 56 broke** (9 evasion, 6 false positive, 1 prompt injection). Scores are from `results/attack_run_2026-11-04_1811.md`. "Combined" is the 0.5/0.5 average, and the AI threshold is 0.65.
+
+*The pattern behind the 9 evasions.* Every one slipped to "unsure" and none reached "human". Clean AI text scored only 0.69 to 0.74 combined in the eval run, so it sits about 0.04 above `AI_THRESHOLD`. Any edit that shaves 0.04 off either signal flips the label. That is a thin margin at the combining rule and the label mapping, and each row below shows what moved.
+
+| Attack | Combined | What moved | Stage and mechanism |
+|---|---|---|---|
+| EV01 typos | 0.41 | model 0.16, style 0.65 | **Signal one.** I aimed this at signal two and it failed there: style stayed at 0.65. The typos broke words into rare tokens, which spiked perplexity and dropped `model_score` to 0.16. |
+| EV02 broken-up sentences | 0.55 | model 0.59, style 0.51 | **Signal two.** Short fragments raise `sentence_length_spread`, which flips toward human. |
+| EV03 pasted quotation | 0.625 | model 0.67, style 0.58 | **Signal two, then the label mapping.** A small shift in both signals, and 0.025 below the threshold was enough. |
+| EV04 unusual words | 0.629 | model 0.61, style 0.65 | **Signal one.** Rare words raise perplexity. The score ended 0.021 below `AI_THRESHOLD`. |
+| EV05 heavy human edit | 0.44 | model 0.32, style 0.55 | **Signal one and signal two together.** Both moved, and the average followed. |
+| EV06 one long, one short sentence | 0.52 | model 0.57, style 0.46 | **Signal two.** Two extreme sentence lengths inflate the coefficient of variation. |
+| EV07 punctuation padding | 0.58 | model 0.63, style 0.53 | **Signal two.** `punctuation_density` counts only `:;,()?!—–`, so adding them is free. |
+| EV08 text below the token window | 0.50 | both exactly 0.5 | **Signals one and two, through the `MIN_WORDS` gate.** Both return 0.5 on short text, so the combining rule gets 0.5 and 0.5 and the label is "unsure". Short AI text can't be caught. |
+| EV09 human paragraph bolted on | 0.628 | model 0.68, style 0.57 | **Signal one and signal two, plus the route.** Both signals read the whole text, so a human opening dilutes the AI part. Nothing scores paragraphs separately. |
+
+*The 6 false positives (FP02 to FP07, combined 0.72 to 0.77).* These are real human texts labelled "ai". Both signals agree on them, which is why they got through.
+- **Signal one is the main driver, with `model_score` 0.74 to 0.88.** Formal, rubric-shaped, templated and deliberately repetitive writing is predictable to the language model, so perplexity is low. That is how FP03 (a careful non-native speaker) and FP07 (a repeated phrase) scored 0.81 and 0.88.
+- **Signal two corroborates at 0.63 to 0.72.** Even sentence lengths, little punctuation variety and repeated vocabulary all read as AI, so it adds to the accusation.
+- **The combining rule cannot dissent.** An average has no way to say "formal register, so discount signal one." FP01, plain and clear human writing, landed at 0.635, which is only 0.015 below the line. At 0.65 the label mapping is the last defence, and it is set too close.
+- These break the criterion 1 target in spirit. That target passed on my own 10 texts, but these six show the same mechanism on other writers.
+
+*PI02 (`prompt_injection`, combined 0.332, label "human").* **Signal one.** This is the only attack that reached the human label. Its odd-word padding raised perplexity, so `model_score` fell to 0.16 while style sat at 0.51. The "system message" instruction itself did nothing, because the detector never reads instructions. PI01, PI03, PI04, PI05 and PI06 held for that reason.
+
+*RQ11 is not a break.* The rate limiter returned 429 before the request was analysed, so the result is INCONCLUSIVE. It has to be rerun alone before it can be called held or broken. The route stage is not shown to be at fault.
+
+*Also seen.* MF08 (60,000 characters) is marked HELD, but it came back with no `warning` field. That is the same gap as the criterion 5 miss.
 
 
 
