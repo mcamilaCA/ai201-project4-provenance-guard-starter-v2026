@@ -157,3 +157,149 @@ gives "enormous" a number I can pass or fail.
      A number you missed stays where it is, gets diagnosed, and gets a fix
      attempted. That's where the points are.
      ───────────────────────────────────────────────────────────────────────── -->
+
+
+---
+---
+
+# Unit 9 criteria — the observability extension
+
+Unit 9 added instrumentation around the existing service without changing what
+it decides: a `run_id` on every request, stage timings with model time split
+from overhead, token and compute-second cost, one execution record per request
+(`logs/runs.jsonl`), one failure record per failure (`logs/failures.jsonl`),
+link monitoring (status codes, rate-limit hits, availability), and aggregation
+in `metrics.py` and `/metrics`.
+
+All five criteria below are about that extension. Criterion 2 is the bad path,
+and criterion 5 covers both the bad path of the extension itself and the
+promise that the original system is unchanged.
+
+"Warm" means after the first request since the service started (the first one
+pays a one-time model load of 2 to 4 seconds). Targets hold in each of 3
+trials.
+
+---
+
+## U9-1. Every request can be traced from response to log
+
+In a batch of 20 requests (10 valid `/submit`, 3 refused inputs, 2 over the
+rate limit, 3 `/ping`, 2 `/health`):
+
+- all 20 responses carry an `X-Request-ID` header;
+- the 20 ids appear in `logs/runs.jsonl` exactly once each (20 ids, 20 records,
+  no duplicates, none missing);
+- each of the 15 requests that write to the audit log (10 decisions, 3
+  refused inputs, 2 rate-limited) has an `audit.jsonl` entry carrying the same
+  `run_id`.
+
+Target: 20 of 20, and 15 of 15.
+
+**Why this target:** The `run_id` is the join key between three files, so
+whether it is present is a rule, not a probability. Looser (19 of 20) means one
+request can't be followed, and the one that can't be followed is the one I will
+be searching for, the same trap unit 8 taught with rate-limited requests that
+left no trace. Stricter isn't possible, because 100% is already the maximum.
+
+---
+
+## U9-2. Every refused or failed request leaves exactly one correct failure record
+
+In a batch of 5 non-2xx requests:
+
+| Request | Response | Stage | Category |
+|---|---|---|---|
+| text is only spaces | 400 | `validate` | `validation_failure` |
+| `text` field missing | 400 | `validate` | `validation_failure` |
+| 7th request from one `creator_id` within a minute | 429 | `request` | `rate_limit` |
+| 8th request from the same `creator_id` | 429 | `request` | `rate_limit` |
+| valid 40+ word text, service started with `AI201_DETECTOR_MODEL=not-a-real-model-xyz` | 500 | `model_signal` | `model_unavailable` |
+
+`logs/failures.jsonl` gains exactly 5 records (none missing, none extra), each
+with the `run_id` from that response's `X-Request-ID`, the stage and category in
+the table, and a non-empty `message`. The HTTP status of each response is the
+same as it was before instrumentation.
+
+Target: 5 of 5.
+
+**Why this target:** A failure that shows up only as an absence is one I will
+never find, so a missing record is the failure this criterion exists to catch.
+The category matters as much as the count: `metrics.py` counts only 5xx
+responses as errors, so a model-load failure filed under `validation_failure`
+would leave the error rate at 0.0 while the service was down. That is why I
+check stage and category and not just that a record exists. Looser (4 of 5)
+would let one whole class of failure go unrecorded.
+
+---
+
+## U9-3. Recorded timings agree with an independent clock
+
+Over 20 warm `/submit` requests sent over real HTTP, measured with a stopwatch
+in the client (`requests` elapsed time):
+
+- for each request, the recorded `duration_ms` is within 15 ms of the
+  client-measured time;
+- for each request, the stage durations add up to at least 98% of
+  `duration_ms`.
+
+Target: 20 of 20 on both.
+
+**Why this target:** A timing number nobody has compared to another clock is a
+claim, not a measurement. I measured the gap on this laptop: client time
+exceeded the recorded time by 1.0 to 5.1 ms (loopback HTTP and thread
+hand-off), and the stages covered 99.5 to 99.7% of each request. 15 ms is about
+three times the largest gap I saw and half of a typical 31 ms request, so it
+passes normal noise but would catch a missing stage. Stricter (5 ms) would fail
+on that noise and not on an error. Looser (100 ms) is more than three whole
+requests, which would hide an untimed stage entirely, and it could never
+distinguish model time from overhead, which is the point of recording them
+separately.
+
+---
+
+## U9-4. `/metrics` reproduces what a recount of the raw logs gives
+
+After a batch of 21 requests (16 successful, 3 refused inputs, 2 rate-limited),
+the following figures from `GET /metrics` match a recount done by hand from
+`runs.jsonl` and `failures.jsonl`:
+
+1. total requests (21);
+2. requests by outcome (16 ok, 3 client_error, 2 rate_limited);
+3. rate-limit hits (2);
+4. total failures (5);
+5. total input tokens (summed from the run records);
+6. request p50 latency (equal to the median of the recorded `duration_ms`, to 3
+   decimals).
+
+Target: 6 of 6 exact.
+
+**Why this target:** `metrics.py` stores nothing; it recomputes from the files
+on every call, so any difference is a bug and not noise. Exact is the only
+honest tolerance: the rare events are the ones that matter, and a 5% tolerance
+on 2 rate-limit hits out of 21 would accept 0 hits and call the link healthy.
+A dashboard that disagrees with its own source data is worse than none, because
+people act on it.
+
+---
+
+## U9-5. Telemetry never changes or blocks a response
+
+Two checks of one rule:
+
+- **Same answers:** for 10 fixed texts, the `/submit` response with telemetry
+  on and with `AI201_TELEMETRY=0` has the same keys and the same `guess`,
+  `label`, `confidence`, `model_score` and `style_score`. Target: 10 of 10.
+- **Telemetry down:** with `logs/runs.jsonl` and `logs/failures.jsonl` replaced
+  by directories of the same names (real files moved aside first and restored
+  after), 10 valid submissions still return 200 with a full response and 1
+  blank-text submission still returns 400. Target: 11 of 11.
+
+**Why this target:** Unit 9's scope was to monitor the system "without
+changing its classification behavior". A writer's verdict must not depend on
+whether a measurement tool is running, so even one differing score means the
+instrumentation altered what a person is told. The second check is the bad path
+of the extension itself: if a full disk or a bad permission on a log file could
+turn a writer's submission into a 500, the monitor would be the most fragile
+part of the service. Both checks are deterministic in this system (the same
+text gives the same scores), so 100% is achievable and anything less is a real
+defect.
