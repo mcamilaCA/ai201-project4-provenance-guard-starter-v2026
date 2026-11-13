@@ -74,6 +74,31 @@ class Telemetry(unittest.TestCase):
         self.assertAlmostEqual(run["cost"]["usd"], 0.005, places=6)  # 0.5s * $36/h
         self.assertEqual(run["outcome"], "ok")
 
+    def test_input_metadata_without_text_and_compute_seconds(self):
+        import hashlib
+        self.submit({"text": TEXT, "creator_id": "t1"})
+        run = telemetry.read_records(config.RUNS_LOG)[0]
+        self.assertEqual(run["input"], {
+            "chars": len(TEXT), "words": len(TEXT.split()),
+            "sha256_16": hashlib.sha256(TEXT.encode()).hexdigest()[:16]})
+        self.assertNotIn(TEXT[:30], json.dumps(run))       # the text itself is never stored
+        c = run["cost"]["compute_seconds"]
+        self.assertEqual(c["inference"], 0.5)
+        self.assertGreater(c["wall"], 0)
+        self.assertGreaterEqual(c["cpu"], 0)
+        self.assertEqual(run["cost"]["usd"], run["cost"]["usd"])  # priced figure still present
+        m = metrics.compute()["cost"]["compute_seconds"]
+        self.assertEqual(m["total_inference"], 0.5)
+
+    def test_metrics_tolerate_records_without_compute_seconds(self):
+        old = {"record_type": "run", "run_id": "x", "started_at": telemetry._now(),
+               "route": "/submit", "outcome": "ok", "http_status": 200, "duration_ms": 5,
+               "stages": [], "inference": [], "usage": {"input_tokens": 10},
+               "cost": {"usd": 0.0}}
+        telemetry.write_record(config.RUNS_LOG, old)
+        m = metrics.compute()
+        self.assertEqual(m["cost"]["compute_seconds"]["total_wall"], 0)
+
     def test_validation_failure_record(self):
         r = self.submit({"text": "   ", "creator_id": "t1"})
         self.assertEqual(r.status_code, 400)

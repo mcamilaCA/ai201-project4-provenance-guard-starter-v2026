@@ -223,6 +223,8 @@ def submit():
     if not isinstance(creator_id, str) or not creator_id.strip():
         creator_id = "unknown"
 
+    telemetry.record_input(text)
+
     if not isinstance(text, str) or not text.strip():
         telemetry.mark_stage("validate")
         audit.log_rejection(creator_id=creator_id, reason="invalid_text")

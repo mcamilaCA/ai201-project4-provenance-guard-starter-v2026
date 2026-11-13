@@ -17,7 +17,7 @@ Design rules, because this sits in the request path:
 Record schema (`schema_version` 1)
 
   run:      run_id, started_at, route, method, http_status, outcome,
-            duration_ms, stages[{name, status, duration_ms,
+            duration_ms, input{chars, words, sha256_16}, stages[{name, status, duration_ms,
             inference_ms?, overhead_ms?}], inference[{model, input_tokens,
             tokenize_ms, forward_ms, load_ms, cold_start}], usage, cost,
             failure_categories, context
@@ -26,6 +26,7 @@ Record schema (`schema_version` 1)
 """
 
 import contextvars
+import hashlib
 import json
 import sys
 import threading
@@ -167,6 +168,8 @@ class Run:
         self.method = method
         self.started_at = _now()
         self._t0 = time.perf_counter()
+        self._cpu0 = time.process_time()
+        self.input: dict | None = None
         self.stages: list[dict] = []
         self.inference: list[dict] = []
         self.failures: list[dict] = []
@@ -194,6 +197,7 @@ class Run:
     def finish(self, http_status: int | None) -> dict:
         """Close the run, write its records, and return the run record."""
         duration = time.perf_counter() - self._t0
+        cpu_seconds = time.process_time() - self._cpu0
 
         # A 4xx/5xx with no exception behind it (a refused input, a 429) is
         # still a failure worth a record.
@@ -221,13 +225,27 @@ class Run:
             "http_status": http_status,
             "outcome": outcome_for(http_status),
             "duration_ms": _ms(duration),
+            "input": self.input,
             "stages": self.stages,
             "inference": self.inference,
             "usage": {"model": model, "input_tokens": in_tokens,
                       "output_tokens": 0, "source": "local" if model else None},
-            "cost": compute_cost(model, in_tokens, 0, forward_s) if model else
-                    {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0,
-                     "priced_model": None},
+            "cost": {
+                **(compute_cost(model, in_tokens, 0, forward_s) if model else
+                   {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0,
+                    "priced_model": None}),
+                # Measured, not priced: seconds of compute this request used.
+                #   wall      the whole request, start to finish
+                #   inference the model's forward pass alone
+                #   cpu       CPU time the process burned meanwhile (all
+                #             threads; includes other requests running at the
+                #             same moment, so it is exact for a single caller)
+                "compute_seconds": {
+                    "wall": round(duration, 6),
+                    "inference": round(forward_s, 6),
+                    "cpu": round(cpu_seconds, 6),
+                },
+            },
             "failure_categories": sorted({f["category"] for f in self.failures}),
             "context": {k: v for k, v in self.context.items()
                         if k in ("content_id", "label")},
@@ -300,6 +318,22 @@ def stage(name: str):
             entry["inference_ms"] = inference_ms
             entry["overhead_ms"] = round(entry["duration_ms"] - inference_ms, 3)
         r.stages.append(entry)
+
+
+def record_input(text) -> None:
+    """
+    Note what was submitted without storing it: length and a short SHA-256
+    prefix. The hash lets you spot the same text arriving twice; it can't be
+    turned back into the text. No-op outside a run or for non-strings.
+    """
+    r = _current.get()
+    if r is None or not isinstance(text, str):
+        return
+    r.input = {
+        "chars": len(text),
+        "words": len(text.split()),
+        "sha256_16": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def mark_stage(name: str) -> None:

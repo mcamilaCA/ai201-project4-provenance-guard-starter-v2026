@@ -1586,99 +1586,97 @@ A different creator, so the limiter did not apply. The signals are near the midd
 
 **What the five runs show:** valid requests return the same response shape as before, the rate limit still triggers on the 7th request, refused requests are visible rather than silent, and every record from one request can be joined by its `run_id` (`curl "http://127.0.0.1:5000/runs?run_id=<id>"`). Across the whole session `metrics.py` reported an error rate of 0.0 and availability of 1.0.
 
-## Hosting: Local with Logs
+## Structured Logging and Cost of One Run
 
-Provenance Guard runs as a single local process on your own machine. Nothing is deployed to a server and no hosted service is called. Every record it produces stays in `logs/` as plain JSON lines, so the system can be inspected and diagnosed after the fact.
+### What one run record contains
 
-### Start command
+Every request writes one JSON line to `logs/runs.jsonl`. The named fields:
 
-From the project folder, with the virtual environment active:
-
-```bash
-source .venv/bin/activate
-python app.py
-```
-
-or without activating it:
-
-```bash
-.venv/bin/python app.py
-```
-
-It listens on `http://127.0.0.1:5000` (loopback only, so only this machine can reach it) and prints the settings it is using:
-
-```
-Provenance Guard on http://127.0.0.1:5000
-  detector model:  gpt2
-  rate limiting:   ON
-  audit log:       .../logs/audit.jsonl
-  telemetry:       ON  .../logs/runs.jsonl
-```
-
-Stop it with `Ctrl+C`. To confirm it is alive, from a second terminal:
-
-When using teh site ensure to use a second terminal, NOT the same one you used for the app.py command before
-
-```bash
-curl -s http://127.0.0.1:5000/health
-curl -X POST http://127.0.0.1:5000/ping -H "Content-Type: application/json" -d '{"message": "hello"}'
-```
-
-
-⚠️ **macOS:** the AirPlay Receiver also listens on port 5000. If `python app.py` says *Address already in use*, or `curl localhost:5000` returns `403` with `Server: AirTunes`, either turn off AirPlay Receiver (System Settings) or start on another port: `PORT=5001 python app.py`. Use `127.0.0.1` rather than `localhost` in curl commands, since `localhost` can resolve to the AirPlay listener.
-
-### Environment needs
-
-| Need | Requirement |
+| Field | Meaning |
 |---|---|
-| Python | 3.11, 3.12 or 3.13 (not 3.14). Tested on 3.13 |
-| Packages | `pip install -r requirements.txt` (Flask, Flask-Limiter, requests, transformers, torch) |
-| Disk | About 9 GB free (torch is most of it). The GPT-2 model itself is about 550 MB |
-| Memory | 4 GB RAM minimum |
-| Network | Only for the first run, to download GPT-2. After that it runs offline |
-| Accounts / keys | None. The model runs locally, so there is no API key and no usage bill |
-| OS | Developed on macOS; nothing in the code is platform-specific |
+| `run_id`, `started_at` | Which request and when (UTC). The same `run_id` is in the audit entry and any failure record |
+| `route`, `method`, `http_status`, `outcome` | What was called and how it ended (`ok`, `client_error`, `rate_limited`, `server_error`) |
+| `input` | `chars`, `words` and `sha256_16` (a short hash) of the submitted text. **The text itself is never stored**; the hash lets you spot the same text arriving twice |
+| output | `context.label` and `context.content_id` here; the guess and all three scores are in `audit.jsonl` under the same `run_id` |
+| `duration_ms`, `stages[]` | Total time and time per stage, with `inference_ms` and `overhead_ms` on the model stage |
+| `inference[]`, `usage` | Model name, tokens read, tokenize/forward/load time, cold-start flag |
+| `cost` | Dollar figure (token pricing plus optional hourly machine rate) and `compute_seconds` (below) |
 
-First-time setup:
+Failed runs leave a record too, in `logs/failures.jsonl` (stage, error type, message, category, same `run_id`), so a failure never shows up only as an absence.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python test.py          # checks Python, packages, disk, model and the service
-python detector.py      # downloads GPT-2 (~550 MB) and scores a sample
+### What a run costs
+
+The detector is a local model, so there is no API spend and the dollar figure is 0.00. The real cost of a run is **seconds of compute**, so that is what each run record now measures in `cost.compute_seconds`:
+
+- `wall`: the whole request, start to finish (`time.perf_counter`)
+- `inference`: the GPT-2 forward pass alone
+- `cpu`: CPU seconds the process used (`time.process_time`, all threads)
+
+The existing dollar calculation is unchanged and still sits beside it.
+
+### How I measured it
+
+`python measure_cost.py` runs the real `/submit` route in-process (so it uses the same stages and telemetry as a live request, with logs sent to a temp folder rather than `logs/`). It does one warm-up submission first, to pay the one-time model load, then **10 timed submissions**, one at a time, each a different writing sample of at least 40 words from `scenarios.py`. It reads each run's measured seconds and tokens back from the telemetry record, then writes mean, standard deviation, min, max and every per-run row to `results/cost_measurement_<timestamp>.md`.
+
+### Result (10 runs, this laptop)
+
+| Measure | Mean | Std dev | Min | Max |
+|---|---|---|---|---|
+| Wall time (s) | 0.0314 | 0.0028 | 0.0273 | 0.0355 |
+| Model inference (s) | 0.0306 | 0.0028 | 0.0265 | 0.0346 |
+| CPU time (s) | 0.0467 | 0.0053 | 0.0398 | 0.0556 |
+| Input tokens | 69.2 | 8.8 | 58 | 86 |
+
+**One scored run costs about 0.03 s of wall time and 0.05 s of CPU, for about 69 tokens.** The model is about 97% of the wall time, so the rest of the pipeline (style signal, scoring, label, audit write) is negligible. CPU is higher than wall because PyTorch uses several threads at once. The one-time cold start (loading GPT-2) was about 2.3 s, measured separately and not included in the average. These numbers belong to this machine at the time of the run; texts shorter than 40 words skip the model and cost almost nothing. To turn seconds into dollars, set `AI201_COMPUTE_USD_PER_HOUR`.
+
+## Instrumentation
+
+Every request appends one structured record to `logs/runs.jsonl`, and every failed request appends one to `logs/failures.jsonl`. Both are JSON lines I read back with `python metrics.py`, `/runs` and `/failures`. Nothing is printed to the terminal instead of logged.
+
+The entries below are real lines copied unedited from those files. They were produced by sending ten submissions to the running service (`instrumentation-1` to `instrumentation-10`, ten different writing samples from `scenarios.py`, one request each) and one refused input. Fields to look for: `run_id` and `started_at`; `input` (length and hash, never the text); `outcome` and `http_status`; `duration_ms` and per-stage `stages`, where the model stage splits into `inference_ms` (model call alone) and `overhead_ms` (everything else); `usage` (tokens); `cost` (dollars plus measured `compute_seconds`); and `context` (the label and `content_id` returned).
+
+### Ten successful runs (`logs/runs.jsonl`)
+
+```json
+{"schema_version": 1, "record_type": "run", "run_id": "b4e9e137a6c44143a10675e0c097dbb7", "started_at": "2026-11-13T04:44:48.623+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 7155.039, "input": {"chars": 815, "words": 139, "sha256_16": "6171cfca8d19792b"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 7153.715, "inference_ms": 994.043, "overhead_ms": 6159.672}, {"name": "style_signal", "status": "ok", "duration_ms": 0.254}, {"name": "combine", "status": "ok", "duration_ms": 0.002}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.498}], "inference": [{"model": "gpt2", "input_tokens": 173, "tokenize_ms": 4.922, "forward_ms": 994.043, "load_ms": 5534.739, "cold_start": true}], "usage": {"model": "gpt2", "input_tokens": 173, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 7.155039, "inference": 0.994043, "cpu": 1.708722}}, "failure_categories": [], "context": {"content_id": "c88ea7ac-3919-4594-b5a1-233b5eb8640b", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "b7482800dbd043ac8b4f7b6dafad905f", "started_at": "2026-11-13T04:44:55.781+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 40.189, "input": {"chars": 436, "words": 67, "sha256_16": "eb3d58ad5172a284"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 39.414, "inference_ms": 39.03, "overhead_ms": 0.384}, {"name": "style_signal", "status": "ok", "duration_ms": 0.109}, {"name": "combine", "status": "ok", "duration_ms": 0.002}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.327}], "inference": [{"model": "gpt2", "input_tokens": 74, "tokenize_ms": 0.34, "forward_ms": 39.03, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 74, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.040189, "inference": 0.03903, "cpu": 0.058964}}, "failure_categories": [], "context": {"content_id": "c679a59b-e560-4347-893e-cbddb8752efb", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "23329f5ab334499ebbbc0377f044535f", "started_at": "2026-11-13T04:44:55.823+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 35.356, "input": {"chars": 309, "words": 55, "sha256_16": "c4ed25c4ca10a244"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 34.705, "inference_ms": 34.418, "overhead_ms": 0.287}, {"name": "style_signal", "status": "ok", "duration_ms": 0.089}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.2}], "inference": [{"model": "gpt2", "input_tokens": 61, "tokenize_ms": 0.243, "forward_ms": 34.418, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 61, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.035356, "inference": 0.034418, "cpu": 0.048743}}, "failure_categories": [], "context": {"content_id": "ebc1dfd1-a0dc-42f3-872d-66737ec38a40", "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result."}}
+{"schema_version": 1, "record_type": "run", "run_id": "3e5a2ae48cc241ec9896291ec78a23f8", "started_at": "2026-11-13T04:44:55.860+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 36.456, "input": {"chars": 437, "words": 73, "sha256_16": "40a279717c8ac97d"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 35.87, "inference_ms": 35.571, "overhead_ms": 0.299}, {"name": "style_signal", "status": "ok", "duration_ms": 0.097}, {"name": "combine", "status": "ok", "duration_ms": 0.002}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.197}], "inference": [{"model": "gpt2", "input_tokens": 86, "tokenize_ms": 0.264, "forward_ms": 35.571, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 86, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.036456, "inference": 0.035571, "cpu": 0.057359}}, "failure_categories": [], "context": {"content_id": "82074d62-0221-4d38-8f68-f752196d3ebe", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "e86c2fad253a43cbaad938ed3f8ec2f0", "started_at": "2026-11-13T04:44:55.898+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 30.909, "input": {"chars": 254, "words": 46, "sha256_16": "db0f2521d505c17e"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 30.34, "inference_ms": 30.101, "overhead_ms": 0.239}, {"name": "style_signal", "status": "ok", "duration_ms": 0.083}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.0}, {"name": "audit_write", "status": "ok", "duration_ms": 0.173}], "inference": [{"model": "gpt2", "input_tokens": 58, "tokenize_ms": 0.206, "forward_ms": 30.101, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 58, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.030909, "inference": 0.030101, "cpu": 0.042945}}, "failure_categories": [], "context": {"content_id": "e2992d6a-be73-4d7a-8b3c-0471a92756a4", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "d84df6bb8d184fa7a429d1c57451d860", "started_at": "2026-11-13T04:44:55.930+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 36.39, "input": {"chars": 381, "words": 67, "sha256_16": "8521169ca371f1f6"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 35.802, "inference_ms": 35.541, "overhead_ms": 0.261}, {"name": "style_signal", "status": "ok", "duration_ms": 0.104}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.0}, {"name": "audit_write", "status": "ok", "duration_ms": 0.2}], "inference": [{"model": "gpt2", "input_tokens": 81, "tokenize_ms": 0.227, "forward_ms": 35.541, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 81, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.03639, "inference": 0.035541, "cpu": 0.053936}}, "failure_categories": [], "context": {"content_id": "cdb56c95-03e0-41fd-90b4-fecfc65b6e52", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "6087efa4715943e38537343c73054fb7", "started_at": "2026-11-13T04:44:55.967+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 32.933, "input": {"chars": 301, "words": 56, "sha256_16": "aa64862e571c02ae"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 32.393, "inference_ms": 32.154, "overhead_ms": 0.239}, {"name": "style_signal", "status": "ok", "duration_ms": 0.095}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.182}], "inference": [{"model": "gpt2", "input_tokens": 66, "tokenize_ms": 0.207, "forward_ms": 32.154, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 66, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.032933, "inference": 0.032154, "cpu": 0.047335}}, "failure_categories": [], "context": {"content_id": "71429f54-5971-43b8-9897-66b71dd32498", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "d0ed470b711d43cbbfc8ba7c1f0cf245", "started_at": "2026-11-13T04:44:56.002+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 32.909, "input": {"chars": 316, "words": 55, "sha256_16": "d5887b34690f29ba"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 32.369, "inference_ms": 32.101, "overhead_ms": 0.268}, {"name": "style_signal", "status": "ok", "duration_ms": 0.085}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.0}, {"name": "audit_write", "status": "ok", "duration_ms": 0.176}], "inference": [{"model": "gpt2", "input_tokens": 67, "tokenize_ms": 0.236, "forward_ms": 32.101, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 67, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.032909, "inference": 0.032101, "cpu": 0.047815}}, "failure_categories": [], "context": {"content_id": "311d8046-a122-4028-bee7-efca37c32595", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "b50a82543ead403794db4743db180a63", "started_at": "2026-11-13T04:44:56.036+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 32.767, "input": {"chars": 286, "words": 58, "sha256_16": "cb7d53a482c15b3b"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 32.202, "inference_ms": 31.946, "overhead_ms": 0.256}, {"name": "style_signal", "status": "ok", "duration_ms": 0.086}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.205}], "inference": [{"model": "gpt2", "input_tokens": 69, "tokenize_ms": 0.217, "forward_ms": 31.946, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 69, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.032767, "inference": 0.031946, "cpu": 0.047638}}, "failure_categories": [], "context": {"content_id": "d53bd395-1342-435c-8288-cea716b4dd50", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "3be92c0fb03b4793994089e560ee7730", "started_at": "2026-11-13T04:44:56.070+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 32.806, "input": {"chars": 283, "words": 53, "sha256_16": "43ce281102b86257"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 32.295, "inference_ms": 32.022, "overhead_ms": 0.273}, {"name": "style_signal", "status": "ok", "duration_ms": 0.079}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.173}], "inference": [{"model": "gpt2", "input_tokens": 67, "tokenize_ms": 0.242, "forward_ms": 32.022, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 67, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.032806, "inference": 0.032022, "cpu": 0.04743}}, "failure_categories": [], "context": {"content_id": "c3d78f46-7ee7-4548-ae99-5eb41a68e9ec", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
 ```
 
-The first request after every start is slow (about 3 to 8 seconds) because GPT-2 loads into memory on first use. After that a submission takes tens of milliseconds to about a second. Run `python detector.py` or send one request after starting if you want the model warm before real use.
+### One failed run: rejected input
 
-### Settings (environment variables)
+A submission whose `text` was only spaces (`creator_id` `instrumentation-rejected`) was refused with `400 invalid_text`. It left a run record, with `outcome: client_error`, no stages and no model time:
 
-All have defaults, so none are required.
+```json
+{"schema_version": 1, "record_type": "run", "run_id": "dc1c16c16c584140a14029b2f151e0f2", "started_at": "2026-11-13T04:44:56.104+00:00", "route": "/submit", "method": "POST", "http_status": 400, "outcome": "client_error", "duration_ms": 0.295, "input": {"chars": 3, "words": 0, "sha256_16": "0aad7da77d2ed59c"}, "stages": [], "inference": [], "usage": {"model": null, "input_tokens": 0, "output_tokens": 0, "source": null}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": null, "compute_seconds": {"wall": 0.000295, "inference": 0.0, "cpu": 0.000299}}, "failure_categories": ["validation_failure"], "context": {}}
+```
 
-| Variable | Default | Effect |
-|---|---|---|
-| `HOST` | `127.0.0.1` | Address to listen on. Keep it on loopback for local use |
-| `PORT` | `5000` | Port to listen on |
-| `AI201_DEBUG` | `1` | Flask debug mode. Switches itself off whenever `HOST` is not loopback |
-| `AI201_DETECTOR_MODEL` | `gpt2` | Which Hugging Face model the model signal uses |
-| `AI201_TELEMETRY` | `1` | Set to `0` to stop writing `runs`, `failures` and `client_link` logs |
-| `AI201_COMPUTE_USD_PER_HOUR` | `0` | Machine cost used to turn model seconds into a dollar figure |
+and a failure record with the stage, category and message, sharing the same `run_id`:
 
-Rate limits (6 per minute, 100 per day, per creator) are set in `config.py`.
+```json
+{"schema_version": 1, "record_type": "failure", "run_id": "dc1c16c16c584140a14029b2f151e0f2", "timestamp": "2026-11-13T04:44:56.104+00:00", "route": "/submit", "stage": "validate", "category": "validation_failure", "error_type": null, "message": "invalid_text", "http_status": 400, "context": {}}
+```
 
-### Where the logs go
+The failure path was exercised with other failures earlier in testing: a rate-limited request (`429`, category `rate_limit`) and a wrong-method request (`405`) both appear in `logs/failures.jsonl`. A simulated model-load failure (`DetectorUnavailable`, category `model_unavailable`, recorded against the `model_signal` stage) is covered in `test_telemetry.py`. No timeout or unhandled `500` has occurred in the live service, so those categories are tested but have no live example.
 
-| File | Written by | Contents |
-|---|---|---|
-| `logs/audit.jsonl` | every decision, rejection and appeal | the decision record, now with a `run_id` |
-| `logs/runs.jsonl` | every request | stage timings, model time vs overhead, tokens, cost, outcome |
-| `logs/failures.jsonl` | every failed request | stage, error type, message, category |
-| `logs/client_link.jsonl` | `run_eval.py` and `run_attacks.py` | client-side attempts, retries, timeouts |
+## What It Costs
 
-They are append-only and created on first use. Read them back with `python metrics.py`, or through the running service at `/metrics`, `/runs`, `/failures` and `/log` (see RUNNING.md).
+**The number: one scored run costs about 0.031 s of wall-clock time, 0.047 s of CPU time and reads about 69 tokens. The dollar cost is 0.00.** The detector is a local GPT-2, so there is no API spend. The real cost is seconds of compute, so that is what I measured.
 
-### Limits of this setup
+**How I measured it:** `python measure_cost.py` sent 10 submissions through the real `/submit` route (in-process, logs in a temp folder), one at a time, each a different writing sample of at least 40 words, after one warm-up run that paid the one-time model load. For each run it read back the seconds the telemetry recorded: wall time with `time.perf_counter`, model-only time around the GPT-2 forward pass, and process CPU time with `time.process_time`. It averaged the ten. Full per-run table: `results/cost_measurement_2026-11-12_2241.md`.
 
-- **One process only.** The rate-limit counters live in memory, so restarting the service resets them, and running several copies would not share them. The model is also loaded once per process.
-- **Logs grow without bound.** Nothing rotates or deletes them. `audit.clear()` wipes the audit log; delete the other files by hand if you want a fresh start.
-- **Local only.** Binding to anything other than loopback exposes an unauthenticated service. Gunicorn is pinned in `requirements.txt` for a later unit but this setup does not use it.
+| Measure | Mean (10 runs) | Std dev | Min | Max |
+|---|---|---|---|---|
+| Wall time (s) | 0.0314 | 0.0028 | 0.0273 | 0.0355 |
+| Model inference (s) | 0.0306 | 0.0028 | 0.0265 | 0.0346 |
+| CPU time (s) | 0.0467 | 0.0053 | 0.0398 | 0.0556 |
+| Input tokens | 69.2 | 8.8 | 58 | 86 |
+
+The model call is about 97% of wall time. Not counted in the average: the one-time model load on the first request after a start (2.3 s in this measurement; 4.3 s and 2.5 s in two earlier sessions). The figures are for this laptop; CPU exceeds wall because PyTorch uses several threads. Texts under 40 words skip the model and cost almost nothing. To convert seconds to dollars, set `AI201_COMPUTE_USD_PER_HOUR`.

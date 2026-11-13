@@ -1,6 +1,6 @@
 # Running Provenance Guard
 
-Everything about how the starter works.
+How to run Provenance Guard, and how it is put together. **Everything you need to start it, check it and read its logs is in the next two sections.**
 
 This is a **web service**. It runs on your machine and you talk to it with
 `curl` from another terminal. If you've not built a backend before, that's
@@ -8,88 +8,169 @@ assumed — the starter ships one that already answers.
 
 ---
 
-## Before your first class
+## Run it: local, with logs
+
+Provenance Guard runs as a single local process on your own machine. Nothing is deployed to a server and no hosted service is called. Every record it produces stays in `logs/` as plain JSON lines, so the system can be inspected and diagnosed after the fact.
+
+### Start command
+
+From the project folder, with the virtual environment active:
 
 ```bash
-python3 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-python test.py
-```
-
-**You're ready when `python test.py` passes.**
-
-You'll see `[WARN] Detector model — not downloaded yet`:
-
-```bash
-python detector.py
-```
-
-That downloads about 550 MB and scores a sample.
-
-> **No API key for this pair.** Nothing here calls a hosted service. The model
-> that reads your text runs on your own laptop.
-
----
-
-## Your first five minutes
-
-Two terminals. In the first:
-
-```bash
 python app.py
 ```
 
-In the second:
+or without activating it:
 
 ```bash
-curl -X POST http://127.0.0.1:5000/ping \
-  -H "Content-Type: application/json" \
-  -d '{"message": "hello"}'
+.venv/bin/python app.py
 ```
 
-You should get JSON back. That's the whole idea of a web service — something
-sent it data, it sent something back.
+It listens on `http://127.0.0.1:5000` (loopback only, so only this machine can reach it) and prints the settings it is using:
+
+```
+Provenance Guard on http://127.0.0.1:5000
+  detector model:  gpt2
+  rate limiting:   ON
+  audit log:       .../logs/audit.jsonl
+  telemetry:       ON  .../logs/runs.jsonl
+```
+
+**`python app.py` does not return: it keeps running and holds that terminal.** Open a **second terminal** for every `curl` below (pasting them into the first one does nothing). Stop the service with `Ctrl+C`. To confirm it is alive, from the second terminal:
+
+When using the site ensure to use a second terminal, NOT the same one you used for the app.py command before
+
+```bash
+curl -s http://127.0.0.1:5000/health
+curl -X POST http://127.0.0.1:5000/ping -H "Content-Type: application/json" -d '{"message": "hello"}'
+```
+
+
+⚠️ **macOS:** the AirPlay Receiver also listens on port 5000. If `python app.py` says *Address already in use*, or `curl localhost:5000` returns `403` with `Server: AirTunes`, either turn off AirPlay Receiver (System Settings) or start on another port: `PORT=5001 python app.py`. Use `127.0.0.1` rather than `localhost` in curl commands, since `localhost` can resolve to the AirPlay listener.
+
+### Environment needs
+
+| Need | Requirement |
+|---|---|
+| Python | 3.11, 3.12 or 3.13 (not 3.14). Tested on 3.13 |
+| Packages | `pip install -r requirements.txt` (Flask, Flask-Limiter, requests, transformers, torch) |
+| Disk | About 9 GB free (torch is most of it). The GPT-2 model itself is about 550 MB |
+| Memory | 4 GB RAM minimum |
+| Network | Only for the first run, to download GPT-2. After that it runs offline |
+| Accounts / keys | None. The model runs locally, so there is no API key and no usage bill |
+| OS | Developed on macOS; nothing in the code is platform-specific |
+
+First-time setup:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python test.py          # checks Python, packages, disk, model and the service
+python detector.py      # downloads GPT-2 (~550 MB) and scores a sample
+```
+
+The first request after every start is slow (about 3 to 8 seconds) because GPT-2 loads into memory on first use. After that a submission takes tens of milliseconds to about a second. Run `python detector.py` or send one request after starting if you want the model warm before real use.
+
+### Settings (environment variables)
+
+All have defaults, so none are required.
+
+| Variable | Default | Effect |
+|---|---|---|
+| `HOST` | `127.0.0.1` | Address to listen on. Keep it on loopback for local use |
+| `PORT` | `5000` | Port to listen on |
+| `AI201_DEBUG` | `1` | Flask debug mode. Switches itself off whenever `HOST` is not loopback |
+| `AI201_DETECTOR_MODEL` | `gpt2` | Which Hugging Face model the model signal uses |
+| `AI201_TELEMETRY` | `1` | Set to `0` to stop writing `runs`, `failures` and `client_link` logs |
+| `AI201_COMPUTE_USD_PER_HOUR` | `0` | Machine cost used to turn model seconds into a dollar figure |
+
+Rate limits (6 per minute, 100 per day, per creator) are set in `config.py`.
+
+### Where the logs go
+
+| File | Written by | Contents |
+|---|---|---|
+| `logs/audit.jsonl` | every decision, rejection and appeal | the decision record, now with a `run_id` |
+| `logs/runs.jsonl` | every request | stage timings, model time vs overhead, tokens, cost, outcome |
+| `logs/failures.jsonl` | every failed request | stage, error type, message, category |
+| `logs/client_link.jsonl` | `run_eval.py` and `run_attacks.py` | client-side attempts, retries, timeouts |
+
+They are append-only and created on first use. Read them back with `python metrics.py`, or through the running service at `/metrics`, `/runs`, `/failures` and `/log` (details in *Telemetry and metrics* below).
+
+### Limits of this setup
+
+- **One process only.** The rate-limit counters live in memory, so restarting the service resets them, and running several copies would not share them. The model is also loaded once per process.
+- **Logs grow without bound.** Nothing rotates or deletes them. `audit.clear()` wipes the audit log; delete the other files by hand if you want a fresh start.
+- **Local only.** Binding to anything other than loopback exposes an unauthenticated service. Gunicorn is pinned in `requirements.txt` for a later unit but this setup does not use it.
+
+---
+
+## Check that it works (five minutes)
+
+With the service running in the first terminal, use the second.
+
+**1. The control route.** `/ping` only echoes your message back. If it answers, the service itself is fine:
+
+```bash
+curl -X POST http://127.0.0.1:5000/ping -H "Content-Type: application/json" -d '{"message": "hello"}'
+```
+
+**2. Score some writing.** `/submit` needs `text` and `creator_id`. Text under 40 words returns an "unsure" result without running the model, so use a paragraph:
+
+```bash
+curl -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"creator_id": "me", "text": "I walked down to the harbour early, before the fishermen had even started on their nets, and the water was flat and grey. The gulls were quiet for once. My grandfather used to say that the sea keeps its own counsel, and standing there with cold hands and a thermos going lukewarm, I finally understood what he meant by it."}'
+```
+
+You get back `content_id`, `guess`, `confidence`, `label`, `model_score` and `style_score`. The first call after a start takes several seconds while GPT-2 loads.
+
+**3. Appeal it** (use the `content_id` from step 2):
+
+```bash
+curl -X POST http://127.0.0.1:5000/appeal -H "Content-Type: application/json" \
+  -d '{"content_id": "<content_id>", "reasoning": "I wrote this myself."}'
+```
+
+**4. See what was recorded:**
+
+```bash
+curl "http://127.0.0.1:5000/log?limit=3"
+python metrics.py
+```
+
+**Rate limit:** each `creator_id` may submit 6 per minute and 100 per day. The 7th request in a minute returns `429`, and that refusal is still logged.
 
 > **On Windows, use `curl.exe` and keep it on one line.**
 >
-> In PowerShell, `curl` is an alias for a different tool and the command above
-> fails with `Cannot bind parameter 'Headers'` before it ever reaches your
-> service. The `\` line breaks don't work there either. This does:
+> In PowerShell, `curl` is an alias for a different tool and the commands above
+> fail with `Cannot bind parameter 'Headers'`. The `\` line breaks don't work
+> there either. This does:
 >
 > ```powershell
 > curl.exe -X POST http://127.0.0.1:5000/ping -H "Content-Type: application/json" -d '{\"message\": \"hello\"}'
 > ```
 >
-> Every `curl` command in this file and in the brief works the same way: swap
-> `curl` for `curl.exe` and put it on one line. Git Bash needs no change.
+> Git Bash needs no change.
 
-**Leave `/ping` alone.** It's your control. When something breaks later, check
-`/ping` still answers: if it does, the problem is in your handler; if it
-doesn't, it's the service itself, and that's a help-channel question.
-
-Then try the route you're going to build:
-
-```bash
-curl -X POST http://127.0.0.1:5000/submit \
-  -H "Content-Type: application/json" \
-  -d '{"text": "some writing", "creator_id": "me"}'
-```
-
-It returns a `501` saying it isn't built yet. **That's the correct starting
-position.**
+**Leave `/ping` alone.** When something breaks later, check `/ping` still answers: if it does, the problem is in the handler; if it doesn't, it's the service itself.
 
 ---
 
 ## The routes
 
-| Route | State | What it does |
-|---|---|---|
-| `POST /ping` | **works** | The example. Don't edit it |
-| `GET /health` | **works** | Is the service up, is the model loaded |
-| `GET /log` | **works** | The audit log, as JSON |
-| `POST /submit` | **you build it** | Milestones 3, 4, 5 |
-| `POST /appeal` | **you build it** | Milestone 5 |
+| Route | What it does |
+|---|---|
+| `POST /ping` | The control route. Echoes your message |
+| `GET /health` | Is the service up, is the model loaded |
+| `POST /submit` | Scores text; returns label, confidence and both signal scores |
+| `POST /appeal` | Records a writer's appeal; the item becomes `under_review` |
+| `GET /content/<id>` | One item's current status |
+| `GET /log` | The audit log (`?limit=N`) |
+| `GET /metrics` | Counts, error rates, latency percentiles, cost (`?since=<seconds>`) |
+| `GET /runs` | Execution records (`?limit=N`, `?run_id=<id>`) |
+| `GET /failures` | Failure records (`?limit=N`, `?category=<name>`) |
 
 ---
 
@@ -99,6 +180,9 @@ position.**
 |---|---|
 | `python test.py` | Checks your environment |
 | `python app.py` | Runs the service |
+| `python metrics.py` | Operational metrics from the telemetry logs (`--since 3600`, `--json`) |
+| `python measure_cost.py` | Measures the compute cost of one run over 10 runs; writes `results/cost_measurement_*.md` |
+| `python test_telemetry.py` | Self-check for the telemetry layer (no model needed) |
 | `python detector.py` | Downloads the model and scores a sample — **run before class** |
 | `python detector.py "some text"` | Score one piece of text from the terminal |
 | `python stylometry.py "some text"` | Your style measures, on one piece of text |
@@ -154,6 +238,8 @@ one signal. Then log it.
 ---
 
 ## Turning on rate limiting (unit 8)
+
+> **Already done in this repo:** rate limiting is on and the decorator is active, so you don't need to do this to run the system. The steps are kept for reference.
 
 Three steps:
 
@@ -239,16 +325,20 @@ your write-up; that's the deliverable.
 | File | What it does |
 |---|---|
 | `config.py` | Every setting: thresholds, weights, rate limits, the model |
-| `app.py` | The service. `/ping` and `/log` work; `/submit` and `/appeal` are yours |
+| `app.py` | The service and all its routes |
 | `detector.py` | Signal one — the local model. Given to you |
-| `stylometry.py` | Signal two. **Stubs — you build these** |
-| `scoring.py` | Combining and labelling. **Stubs — you build these** |
-| `audit.py` | The audit log writer. Given to you |
+| `stylometry.py` | Signal two |
+| `scoring.py` | Combining and labelling |
+| `audit.py` | The audit log writer |
+| `telemetry.py` | Run ids, stage timings, failure records, cost |
+| `metrics.py` | Aggregates the telemetry logs |
+| `link_client.py` | Records client-side attempts, retries and timeouts |
+| `measure_cost.py` | The ten-run cost measurement |
 | `run_attacks.py` | Runs the attack set — **unit 8** |
 | `run_eval.py` | Runs your criteria three times — **unit 8** |
 | `scenarios.py` | What your test runs. **You fill this in** |
 | `criteria.md` | Your five criteria. **You write all five** |
-| `logs/audit.jsonl` | Your audit log. **Commit it** |
+| `logs/` | `audit.jsonl`, `runs.jsonl`, `failures.jsonl`, `client_link.jsonl`. **Commit them** |
 | `results/` | Attack runs and run logs. **Commit them** |
 
 ---
@@ -279,11 +369,12 @@ sentences, a pasted quotation. That is very cheap to do on purpose.
 
 | What you see | What it means |
 |---|---|
-| `501 not_implemented` | Correct at the start — that's the TODO in `app.py` |
 | `404` from curl | Is the server running? Is the path exactly what you typed? |
 | `Cannot bind parameter 'Headers'` | You're in PowerShell, where `curl` is a different tool. Use `curl.exe`, on one line |
 | Request body arrives empty | curl needs `-H "Content-Type: application/json"` |
-| `Address already in use` | A server left running from an earlier attempt. Kill it, don't debug it |
+| `Address already in use` | An earlier `app.py` is still running, or (macOS) AirPlay Receiver holds port 5000. Stop the old one, or run `PORT=5001 python app.py` |
+| `curl` prints nothing | The service isn't running, or you pasted the curl lines into the terminal that is running `app.py`. Use a second terminal, and drop `-s` so errors show |
+| `403` with `Server: AirTunes` | macOS AirPlay, not this service. Use `127.0.0.1` rather than `localhost`, or change `PORT` |
 | The first submission takes 10+ seconds | Signal one is loading the model into memory. Later ones take a second or two |
 | *Every* submission takes 10+ seconds | Something is reloading the model each call. `GET /health` shows `detector_loaded` — if it goes back to `false`, look for a reload in your handler |
 | `DetectorUnavailable` | Run `python detector.py` once to download the model |

@@ -106,6 +106,13 @@ def compute(since_seconds: float | None = None) -> dict:
                                         if a.get("latency_ms") is not None]),
         }
 
+    # Records written before compute_seconds existed simply don't contribute.
+    timed = [r["cost"]["compute_seconds"] for r in scored
+             if "compute_seconds" in r["cost"]]
+    wall = [t["wall"] for t in timed]
+    cpu = [t["cpu"] for t in timed]
+    infer = [t["inference"] for t in timed]
+
     return {
         "window_seconds": since_seconds,
         "requests": {
@@ -129,6 +136,14 @@ def compute(since_seconds: float | None = None) -> dict:
             "per_scored_request_usd": round(cost_usd / len(scored), 8) if scored else None,
             "input_tokens": tokens,
             "scored_requests": len(scored),
+            "compute_seconds": {
+                "total_wall": round(sum(wall), 4),
+                "total_inference": round(sum(infer), 4),
+                "total_cpu": round(sum(cpu), 4),
+                "per_scored_request": {"wall": distribution(wall),
+                                       "inference": distribution(infer),
+                                       "cpu": distribution(cpu)},
+            },
             "note": "0 unless pricing is set in config.PRICING or "
                     "AI201_COMPUTE_USD_PER_HOUR (the detector is a local model).",
         },
@@ -171,6 +186,8 @@ def report(m: dict) -> str:
         "Cost",
         f"  total ${m['cost']['total_usd']}   input tokens {m['cost']['input_tokens']}   "
         f"scored requests {m['cost']['scored_requests']}",
+        f"  compute seconds, per scored request  wall: {_fmt(m['cost']['compute_seconds']['per_scored_request']['wall'])}",
+        f"                                       cpu:  {_fmt(m['cost']['compute_seconds']['per_scored_request']['cpu'])}",
         f"  ({m['cost']['note']})",
         "",
         f"Failures      {m['failures']['total']}   by category: {m['failures']['by_category']}",
