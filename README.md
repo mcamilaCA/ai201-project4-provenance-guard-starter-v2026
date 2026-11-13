@@ -1701,11 +1701,11 @@ The five criteria (U9-1 to U9-5) are in `criteria.md`. This section says what ha
 
 | Criterion | Trial 1 | Trial 2 | Trial 3 | Verdict |
 |---|---|---|---|---|
-| U9-1 traceability: 20/20 headers, 20/20 run records, 15/15 audit entries | PASS | PASS | PASS | met |
-| U9-2 failure records: 5/5 exactly one correct record | PASS | PASS | PASS | met |
-| U9-3 timing: 20/20 within 15 ms and stages ≥ 98% | PASS | PASS | PASS | met |
-| U9-4 metrics: 6/6 figures equal the recount | PASS | PASS | PASS | met |
-| U9-5 telemetry never in the way: 10/10 and 11/11 | PASS | PASS | PASS | met |
+| U9-1 traceability: 20/20 headers, 20/20 run records, 15/15 audit entries | PASS | PASS | PASS | **MET** |
+| U9-2 failure records: 5/5 exactly one correct record | PASS | PASS | PASS | **MET** |
+| U9-3 timing: 20/20 within 15 ms and stages ≥ 98% | PASS | PASS | PASS | **MET** |
+| U9-4 metrics: 6/6 figures equal the recount | PASS | PASS | PASS | **MET** |
+| U9-5 telemetry never in the way: 10/10 and 11/11 | PASS | PASS | PASS | **MET** |
 
 Numbers behind the timing cell: the client clock was 0.96 to 2.27 ms above the recorded time (15 ms allowed), the stages covered at least 98.7% of each request (98% required), and the model call was at least 99% of the model stage. Request latency over the 60 timed requests: mean 36.3 ms, p50 33.1, p95 57.2, p99 66.3, max 73.2.
 
@@ -1715,7 +1715,7 @@ Two things worth knowing about this result. First, the stage-coverage margin is 
 
 Everything below is copied, unedited, from trial 1 of the run above. The lines come from the log files that trial wrote and from `results/unit9_criteria_2026-11-12_2309.json`. The run wrote its logs to a temp folder, so a copy of trial 1's files is kept in `results/unit9_2026-11-12_2309_trial1_logs/` and every line can be checked against its source (`t1-u1/` for U9-1, `t1-u2/` and `t1-badmodel-logs/` for U9-2, `t1-u3/` for U9-3, `t1-u4/` for U9-4, `t1-u5a/` and `t1-u5b/` for U9-5; `.gitkeep` files stand in for the two directories U9-5 creates in place of the telemetry logs). Long files are cut to a few representative lines, and each block says how many there were.
 
-#### **U9-1: Traceability**
+#### **U9-1: Traceability — MET**
 
 - *Function:* `u9_1`  *File:* `check_unit9.py` — sends the 20-request batch and counts the ids
 - *Function:* `Run.finish`  *File:* `telemetry.py` — writes each run record, through `write_record`
@@ -1739,7 +1739,7 @@ Trial 1's batch produced 20 run records and 15 audit entries. Three of the 20 ru
 {"trial": 1, "pass": true, "detail": {"header": "20/20", "one run record each": "20/20", "run records in file": 20, "audit entries joined": "15/15"}}
 ```
 
-#### **U9-2: Failure records**
+#### **U9-2: Failure records — MET**
 
 - *Function:* `u9_2`  *File:* `check_unit9.py` — deliberately causes the failures (2 refused inputs, 2 rate-limited requests) and checks each record
 - *Function:* `u9_2_bad_model`  *File:* `check_unit9.py` — starts a fresh process with a model name that does not exist
@@ -1765,7 +1765,7 @@ The batch's failure file held exactly 4 lines, two `429` and two `400`. The mode
 {"trial": 1, "pass": true, "detail": {"matched": "5/5", "extra records": 0, "model-load failure": "500 / model_signal / model_unavailable", "batch": "limited:429:ok limited:429:ok refused:400:ok refused:400:ok"}}
 ```
 
-#### **U9-3: Timing**
+#### **U9-3: Timing — MET**
 
 - *Function:* `u9_3`  *File:* `check_unit9.py` — sends 20 warm requests and compares a client stopwatch with the recorded time
 - *Function:* `stage`  *File:* `telemetry.py` — times each stage and works out the overhead
@@ -1782,7 +1782,7 @@ Two of the 20 timed run records are shown. Compare `duration_ms` with the stage 
 {"trial": 1, "pass": true, "detail": {"within 15 ms": "20/20", "stages >= 98%": "20/20", "gap ms (min/mean/max)": "0.97 / 1.19 / 2.27", "min stage coverage": "0.9891", "model share of model_signal stage (min)": "0.991"}}
 ```
 
-#### **U9-4: Metrics against a recount**
+#### **U9-4: Metrics against a recount — MET**
 
 - *Function:* `u9_4`  *File:* `check_unit9.py` — sends the 21-request batch, calls `/metrics`, and recounts the raw files in plain Python
 - *Function:* `get_metrics`  *File:* `app.py` — serves `GET /metrics`
@@ -1835,7 +1835,7 @@ The script compared the two in memory and did not save the `/metrics` response, 
 {"trial": 1, "pass": true, "detail": {"matched": "6/6", "total requests": "reported 21 | recount 21", "by outcome": "reported {'client_error': 3, 'ok': 16, 'rate_limited': 2} | recount {'ok': 16, 'rate_limited': 2, 'client_error': 3}", "rate-limit hits": "reported 2 | recount 2", "total failures": "reported 5 | recount 5", "input tokens": "reported 1335 | recount 1335", "request p50 ms": "reported 31.695 | recount 31.695"}}
 ```
 
-#### **U9-5: Telemetry never in the way**
+#### **U9-5: Telemetry never in the way — MET**
 
 - *Function:* `u9_5`  *File:* `check_unit9.py` — runs both parts of the check
 - *Function:* `_append`  *File:* `audit.py` — adds a `run_id` to an audit entry only when a run is active
@@ -1863,3 +1863,28 @@ Part (a): the first two texts, each submitted with telemetry on (`creator_id` en
 ```json
 {"trial": 1, "pass": true, "detail": {"same answers on/off": "10/10", "correct with telemetry files unwritable": "11/11"}}
 ```
+
+### Verdicts: MET or MISSED
+
+Each verdict is against the target written in `criteria.md`, and a criterion counts as MET only if all 3 trials of the recorded run held it (`results/unit9_criteria_2026-11-12_2309.md`).
+
+| Criterion | Target | Trial 1 | Trial 2 | Trial 3 | Verdict |
+|---|---|---|---|---|---|
+| U9-1 Traceability | 20/20 headers, 20/20 run records, 15/15 audit entries | 20, 20, 15 | 20, 20, 15 | 20, 20, 15 | **MET** |
+| U9-2 Failure records | 5/5 exactly one correct record | 5/5 | 5/5 | 5/5 | **MET** |
+| U9-3 Timing | 20/20 within 15 ms **and** 20/20 stage coverage ≥ 98% | 20/20, 20/20 | 20/20, 20/20 | 20/20, 20/20 | **MET** (see below) |
+| U9-4 Metrics vs recount | 6/6 exact | 6/6 | 6/6 | 6/6 | **MET** |
+| U9-5 Telemetry never in the way | 10/10 same answers and 11/11 correct with telemetry unwritable | 10/10, 11/11 | 10/10, 11/11 | 10/10, 11/11 | **MET** |
+
+**Misses: none, so there is no failure to diagnose and no pattern across misses to name.**
+
+**One MET I don't fully trust: U9-3's 98% stage coverage.** After the recorded run I re-ran the same procedure to see how much room the targets had (`results/unit9_u9-3_margin_check_2026-11-13.md`). In 60 new requests, one fell to 97.98% coverage, which would have been a miss. A further 120 requests had none below 98.5%. So about 1 request in 240 crossed the line, and with 60 requests per run that gives roughly a 1-in-5 chance that a re-run of the full 3 trials misses U9-3. The mechanism is fixed time outside the timed stages: about 0.25 ms per request (the median over 120 requests, range 0.22 to 0.39 ms). I measured that figure but not its breakdown; from reading `app.py::submit` the work outside every `telemetry.stage` is reading the JSON body, building the response and the Flask and rate-limiter hooks, so that is my inference, not something I timed. On a 28 ms request that is about 1%, and about 0.3 ms of extra jitter crosses 2%. The stage is not one of the pipeline stages but the request handling around them. The recorded run met the target and I am not changing the verdict, but the 98% target had under one point of margin, so I'd call it passing by luck, not by design.
+
+**Were my targets set low? Yes, in two ways.**
+
+1. **I set them after looking.** I measured the system first (gap 1.0 to 5.1 ms, coverage 99.5%+, telemetry on and off identical) and then chose targets with headroom, so the system could hardly miss them. They are real checks (tightening U9-3 made it fail 0 of 20, which shows the script can report a miss), but they were never going to teach me much by passing.
+2. **The 100% criteria are rules, not tests of a margin.** U9-1, U9-2, U9-4 and U9-5 are already at the maximum, so they can't be tightened. What they lack is breadth. U9-2 exercises only 3 of the 8 failure categories (`validation_failure`, `rate_limit`, `model_unavailable`). `timeout`, `bad_response`, `connection_error`, `upstream_unavailable` and `internal_error` have no live example, and `link_client.py` (retries and timeouts) is not covered by any criterion.
+
+**The criterion I'd tighten: U9-3's gap target, from 15 ms to 5 ms.** The largest gap I measured was 2.27 ms in the recorded run and 2.02 ms in the re-run, so 15 ms is about 7 times the real maximum and would let a missing stage of several milliseconds through. At 5 ms the same 60 requests still pass 60/60 (59/60 at 2 ms), so 5 ms is tight enough to catch a real fault without failing on noise; my first probe saw a single 5.1 ms outlier, so it could still fail occasionally, and that is the point of tightening. For the coverage half of U9-3 the fix is the other way round: the target is already at the edge, so rather than loosen it I'd put the request handling around the stages inside a timed stage, so the untimed 0.25 ms is measured, and then raise the target to 99%.
+
+**What I'd add:** a criterion for the one thing no run shows yet: a client request that exceeds its timeout leaves a `client_link.jsonl` record with outcome `timeout` and, with `retries=2`, exactly 3 attempt records, in 5 of 5 trials.
