@@ -1501,3 +1501,87 @@ I want to add structured operational monitoring that records and measures the be
 - Changipng model (currently is GPT2)
 - Change classification algorithm
 - Train a new model
+
+## The change - After Run Results
+
+TLDR: The system did not break.
+
+Every request now gets a `run_id` (returned as the `X-Request-ID` header and written into its audit entry). Each request also leaves a structured record in `logs/runs.jsonl` with stage timings, model time kept separate from overhead, token count, cost and outcome, and failures go to `logs/failures.jsonl` with a category. `metrics.py`, `/metrics`, `/runs` and `/failures` read these back as counts, error rates, latency percentiles and cost. The classification code, scores, labels, response shapes and rate limits are unchanged, and the recording never raises into a route. Cost is $0 because the detector is a local GPT-2 and no pricing is set.
+
+*Attempted Runs:*
+
+The last five requests of the test session, in order. The calls are the ones from the test template, with the response bodies and ids taken from `logs/audit.jsonl` and `logs/runs.jsonl`. `confidence` is `|combined − 0.5| × 2`.
+
+**Run 1 — `run3`, 5th submission of the burst: scored, labeled AI** (`run_id 68b4673d…`, 29.3 ms total, 28.5 ms of it model inference)
+
+```bash
+curl -si -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"creator_id": "run3", "text": "The committee reviewed the proposal carefully and then adjourned for lunch. The committee reviewed the proposal carefully and then adjourned for lunch. The committee reviewed the proposal carefully and then adjourned for lunch. The committee reviewed the proposal carefully and then adjourned for lunch."}'
+```
+
+Output (`200`, header `X-Request-ID: 68b4673d8a9241c699d7d7999d0ee6b9`):
+```json
+{
+  "content_id": "0f6417a1-ca48-44cc-9649-572449e2f9f9",
+  "guess": "ai",
+  "confidence": 0.8808,
+  "label": "This may have been written by AI. Automated checks can be wrong, so if you wrote it yourself, you can appeal this result.",
+  "model_score": 0.9781,
+  "style_score": 0.9242
+}
+```
+
+Repeated text, so both signals agree it is AI-like (model 0.9781, style 0.9242, combined 0.9404). The run record shows `model_signal` at 28.7 ms with 28.5 ms of inference, so the model dominates and overhead is tiny once it is warm.
+
+**Run 2 — `run3`, 6th submission: scored, same result** (`run_id dca7d5a0…`, 29.4 ms)
+
+```bash
+curl -si -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"creator_id": "run3", "text": "(same text as Run 1)"}'
+```
+
+Output (`200`): same scores and label as Run 1, with a new `content_id` (`37bf899a-292f-4989-8c9b-f23b60db6acf`) and `X-Request-ID: dca7d5a025664cf7aeb1ebea2c82af6d`. Identical input gives identical scores, so scoring is deterministic.
+
+**Run 3 — `run3`, 7th submission: rate limited** (`run_id 8ddacc23…`, 0.4 ms, no stages ran)
+
+```bash
+curl -si -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"creator_id": "run3", "text": "(same text as Run 1)"}'
+```
+
+Output (`429`, header `X-Request-ID: 8ddacc230bb84d38b68decbd1cea7b2c`):
+```json
+{
+  "error": "rate_limited",
+  "limit": "6 per 1 minute",
+  "message": "Too many submissions. Try again shortly."
+}
+```
+The limiter (6 per minute) turned it away before the pipeline ran. The refusal still left a trace: a `rejected` entry in `audit.jsonl`, a `rate_limit` record in `failures.jsonl`, and a `rate_limited` run record, all sharing this `run_id`.
+
+**Run 4 — `run3`, 8th submission: rate limited** (`run_id 6ba99cba…`, 0.3 ms)
+
+Same call and same `429` body as Run 3, with `X-Request-ID: 6ba99cba8aed47219f44e5a54e967e6f`. Recorded the same three ways.
+
+**Run 5 — `run1`: short natural paragraph, labeled unsure** (`run_id 3520b692…`, 66.6 ms total, 64.3 ms model inference)
+
+```bash
+curl -si -X POST http://127.0.0.1:5000/submit -H "Content-Type: application/json" \
+  -d '{"creator_id": "run1", "text": "I walked down to the harbour early, before the fishermen had even started on their nets, and the water was flat and grey. The gulls were quiet for once. My grandfather used to say that the sea keeps its own counsel, and standing there with cold hands and a thermos going lukewarm, I finally understood what he meant by it."}'
+```
+
+Output (`200`, header `X-Request-ID: 3520b692609c4580b77416cfa9d131d8`):
+```json
+{
+  "content_id": "f0d9f5ec-b017-497d-9d8a-2517886159ac",
+  "guess": "unsure",
+  "confidence": 0.0654,
+  "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.",
+  "model_score": 0.5381,
+  "style_score": 0.5304
+}
+```
+
+A different creator, so the limiter did not apply. The signals are near the middle (model 0.5381, style 0.5304, combined 0.5327), which gives the unsure label with low confidence.
+
+**What the five runs show:** valid requests return the same response shape as before, the rate limit still triggers on the 7th request, refused requests are visible rather than silent, and every record from one request can be joined by its `run_id` (`curl "http://127.0.0.1:5000/runs?run_id=<id>"`). Across the whole session `metrics.py` reported an error rate of 0.0 and availability of 1.0.
