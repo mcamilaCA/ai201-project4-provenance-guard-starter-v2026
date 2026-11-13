@@ -1681,6 +1681,25 @@ The failure path was exercised with other failures earlier in testing: a rate-li
 
 The model call is about 97% of wall time. Not counted in the average: the one-time model load on the first request after a start (2.3 s in this measurement; 4.3 s and 2.5 s in two earlier sessions). The figures are for this laptop; CPU exceeds wall because PyTorch uses several threads. Texts under 40 words skip the model and cost almost nothing. To convert seconds to dollars, set `AI201_COMPUTE_USD_PER_HOUR`.
 
+### What it would cost for a hundred people a day
+
+**Assumptions (mine, not measured):** each person submits 5 texts a day, and a machine costs $0.10 an hour (an illustrative rate, not a quote; the shipped setting is $0, see `AI201_COMPUTE_USD_PER_HOUR`). The per-run figures are the measured ones above.
+
+```
+runs per day         = 100 people x 5 texts                      = 500 runs
+wall-clock compute   = 500 runs x 0.0314 s                      = 15.7 s per day
+CPU compute          = 500 runs x 0.0467 s                      = 23.35 s per day
+tokens read          = 500 runs x 69.2 tokens                   = 34,600 tokens per day
+dollars (own rate)   = 15.7 s / 3600 s per hour x $0.10 per hour = $0.00044 per day  ($0.013 per 30 days)
+```
+
+**In one sentence: a hundred people submitting five texts each is 500 runs and about 16 seconds of compute a day, which at $0.10 an hour is about $0.0004 a day (under two cents a month), and $0 on my own laptop.**
+
+Two things the multiplication shows, so the small number isn't misleading:
+
+- **The rate limit sets the ceiling.** `config.py` allows up to 100 submissions per creator per day, so the worst case for 100 people is 100 x 100 = 10,000 runs x 0.0314 s = 314 s = 5.2 minutes of compute, which is $0.0087 a day at the same rate. Still small, because every run is about 31 ms.
+- **The cost that matters is keeping the model loaded, not running it.** A service that has to be up all day costs by the hour whether or not anyone submits: 24 h x $0.10 = $2.40 a day ($72 per 30 days), about 5,500 times the compute the runs actually use. Add the 2 to 4 second cold load after every restart, and the GPT-2 model plus torch needing far more than a free host's 512 MB (see `RUNNING.md`), and the bill for a hundred people is set by the always-on machine, not by the 0.0314 s per run.
+
 ## How Each Unit 9 Criterion Is Run
 
 The five criteria (U9-1 to U9-5) are in `criteria.md`. This section says what has to be run to produce the number for each one. `python check_unit9.py` runs all of it, three times, and writes the numbers to `results/unit9_criteria_<timestamp>.md` (and `.json`). A criterion is met only if all 3 trials pass.
@@ -1974,3 +1993,36 @@ I injected an untimed delay ahead of the telemetry hook (so the client sees it a
 - **A blind spot remains:** a 3 ms untimed delay produced a mean gap of 4.75 ms and was caught by neither limit. The 5 ms limit does not see faults smaller than about 4 ms.
 
 **Net:** a better criterion measuring the same system, with a higher chance of failing on noise. If I wanted to keep tightening, the next step is not a smaller number. It is putting the 0.25 ms of untimed request handling inside a timed stage, so the coverage half has real margin, before touching the gap again.
+
+## What's Still Broken: Unit 9
+
+**Criteria still missed: none.** All five unit-9 criteria (U9-1 to U9-5) were MET in all 3 trials, in the original run and again after tightening U9-3's gap to 5 ms. So there is no miss to diagnose, and I'm not going to pretend one into existence. What follows is what is still open in the extension, what I'd do about each item, and why I stopped. The classifier problems from unit 8 (15 of 56 attacks still getting through, the missing "human" label) are in the earlier "What's Still Broken" and are unchanged: unit 9 did not fix them or make them worse, and U9-5 shows the answers are identical with telemetry on and off.
+
+### The target that was set too low
+
+**U9-3's 98% stage-coverage target, which I'd tighten to 99%.** Today the system does not reliably meet 99%: in the margin check (`results/unit9_u9-3_margin_check_2026-11-13.md`) 56 of 60 requests reached 99% and only 1 of 60 reached 99.5%, and one request in 240 fell below the current 98%. So 98% sits just under what the system actually does, which is why it passed in the recorded run with under a point to spare, and why a re-run could miss it. Raising it to 99% would fail right now. It only becomes a sensible target after the system fix in the first row below, and then I'd expect to hold 99% comfortably (that is a prediction; I haven't measured it).
+
+Two other things I'd say plainly about how low the targets were:
+
+- **I set all five after measuring the system**, with headroom, so none of them was likely to be missed. Tightening U9-3 from 15 ms to 5 ms is the one place that was corrected, and it did expose something the old limit hid (an 8 ms untimed delay: 0 of 20 caught at 15 ms, 20 of 20 at 5 ms).
+- **U9-1, U9-2, U9-4 and U9-5 are already at 100% or exact, so they can't be tightened.** What they lack is breadth, which is the third row below.
+
+### What is still open
+
+| What's open | Mechanism | What I'd do | Why I stopped |
+|---|---|---|---|
+| **U9-3 coverage margin is thin** (lowest 97.98% seen once; 98.92% in the re-run) | About 0.25 ms per request (median over 120, range 0.22 to 0.39 ms) happens outside every `telemetry.stage`: reading the JSON body, building the response and the Flask hooks. That is inferred from `app.py::submit`; I measured the 0.25 ms but not its parts. On a 28 ms request it is about 1%, and about 0.3 ms of jitter crosses 2% | Put the parsing and response-building inside timed stages (for example `parse` and `respond`), then raise the target to 99% | The revision I was asked to make was the gap limit only. Adding stages changes the record schema and the stage list that U9-1 and U9-3 check, so I left it for a deliberate change |
+| **Gap blind spot below about 4 ms** | A 3 ms untimed delay gave a mean gap of 4.75 ms, just under the 5 ms limit, and neither limit caught it | Nothing cheap. Seeing smaller gaps would need a second clock on every request | A tighter limit fails on noise: at 2 ms the margin check passed only 59 of 60 requests with nothing wrong, so 5 ms is already near the floor |
+| **U9-2 only exercises 3 of 8 failure categories** | The batch produces `validation_failure`, `rate_limit` and `model_unavailable`. `timeout`, `bad_response`, `connection_error`, `upstream_unavailable` and `internal_error` have never been produced on a live request, and `link_client.py` (retries, timeouts) is only covered by unit tests with a faked `requests`, not by any criterion | Add the criterion proposed earlier: a client request that exceeds its timeout leaves a `client_link.jsonl` record with outcome `timeout`, and with `retries=2` leaves exactly 3 attempt records, in 5 of 5 trials | I wrote the five criteria before this gap was obvious and didn't add a sixth. I didn't run out of time; it is simply not done |
+| **A wrong-method request is filed as `validation_failure`** | `telemetry.py::classify` maps any 4xx it has no better rule for to `validation_failure`, so a `405` (a wrong method, not bad input) shares a category with a blank-text `400`. It is recorded at stage `request` | Add a separate `client_error` category for 404 and 405 | It doesn't affect `metrics.py`, which counts only 5xx as errors, so I treated it as cosmetic. It does blur the failure counts |
+| **First request after every start is slow** (2.3 to 4.3 s) | The model loads on first use, not at startup (`/health` shows `detector_loaded: false` until then). The cost measurement excludes it, so the 0.031 s per run hides that someone waits several seconds | Call `detector.warm_up()` when the service starts | It would change startup behaviour and I was told to leave the system as it is. It is also a cost: the first writer after each restart pays it |
+| **Token pricing is never exercised** | The dollar figure is 0.00 because the model is local. The compute-rate half is tested (`test_telemetry.py` checks 0.5 s at $36 an hour gives $0.005); the per-token `PRICING` rates are not tested at all, because every shipped rate is 0.0 and no hosted model has ever been priced | Add a test with a made-up per-token price and check `compute_cost` against a hand calculation | There is no hosted model to price, so it would be a test of arithmetic, not of the system. It is a small test I simply haven't written |
+| **Logs and metrics don't scale** | The telemetry files are append-only and never rotated, and `metrics.compute` reads and parses all three files on every `/metrics` call, so its cost grows with the file | Rotate by day and read only the requested window | Nothing here is big (the log is a few hundred lines) and I haven't measured it at scale, so I don't know where it starts to hurt |
+
+### The pattern
+
+Three of these are one problem. The coverage margin, the sub-4 ms blind spot and the miscategorised `405` all live in the stage `request`: the catch-all I use for everything that happens outside the pipeline stages (the 429s, the 405, and the untimed 0.25 ms). The pipeline stages (`model_signal`, `style_signal`, `combine`, `label`, `audit_write`) are timed and categorised well; the edges around them are not. That is one weakness of the instrumentation with three symptoms, and the first row's fix (timing the parsing and the response) would remove two of the three.
+
+### If I had another unit
+
+I would time the request parsing and response building in their own stages (`parse` and `respond`), re-run the three trials, and then raise U9-3's coverage target from 98% to 99%. I'd do that first because it is the only open item where a number I already rely on can fail for no good reason (U9-3 has roughly a one-in-five chance of a false miss on a re-run), and it removes two of the three symptoms that share the `request` stage, while every other item adds coverage rather than repairing a measurement I'm already using.
