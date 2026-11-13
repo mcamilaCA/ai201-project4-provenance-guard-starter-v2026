@@ -1,0 +1,168 @@
+{
+  "U9-1": [
+    {
+      "trial": 1,
+      "pass": true,
+      "detail": {
+        "header": "20/20",
+        "one run record each": "20/20",
+        "run records in file": 20,
+        "audit entries joined": "15/15"
+      }
+    },
+    {
+      "trial": 2,
+      "pass": true,
+      "detail": {
+        "header": "20/20",
+        "one run record each": "20/20",
+        "run records in file": 20,
+        "audit entries joined": "15/15"
+      }
+    },
+    {
+      "trial": 3,
+      "pass": true,
+      "detail": {
+        "header": "20/20",
+        "one run record each": "20/20",
+        "run records in file": 20,
+        "audit entries joined": "15/15"
+      }
+    }
+  ],
+  "U9-2": [
+    {
+      "trial": 1,
+      "pass": true,
+      "detail": {
+        "matched": "5/5",
+        "extra records": 0,
+        "model-load failure": "500 / model_signal / model_unavailable",
+        "batch": "limited:429:ok limited:429:ok refused:400:ok refused:400:ok"
+      }
+    },
+    {
+      "trial": 2,
+      "pass": true,
+      "detail": {
+        "matched": "5/5",
+        "extra records": 0,
+        "model-load failure": "500 / model_signal / model_unavailable",
+        "batch": "limited:429:ok limited:429:ok refused:400:ok refused:400:ok"
+      }
+    },
+    {
+      "trial": 3,
+      "pass": true,
+      "detail": {
+        "matched": "5/5",
+        "extra records": 0,
+        "model-load failure": "500 / model_signal / model_unavailable",
+        "batch": "limited:429:ok limited:429:ok refused:400:ok refused:400:ok"
+      }
+    }
+  ],
+  "U9-3": [
+    {
+      "trial": 1,
+      "pass": true,
+      "detail": {
+        "within 15 ms": "20/20",
+        "stages >= 98%": "20/20",
+        "gap ms (min/mean/max)": "0.97 / 1.19 / 2.27",
+        "min stage coverage": "0.9891",
+        "model share of model_signal stage (min)": "0.991"
+      }
+    },
+    {
+      "trial": 2,
+      "pass": true,
+      "detail": {
+        "within 15 ms": "20/20",
+        "stages >= 98%": "20/20",
+        "gap ms (min/mean/max)": "1.11 / 1.28 / 1.94",
+        "min stage coverage": "0.9874",
+        "model share of model_signal stage (min)": "0.991"
+      }
+    },
+    {
+      "trial": 3,
+      "pass": true,
+      "detail": {
+        "within 15 ms": "20/20",
+        "stages >= 98%": "20/20",
+        "gap ms (min/mean/max)": "0.96 / 1.12 / 2.12",
+        "min stage coverage": "0.9906",
+        "model share of model_signal stage (min)": "0.990"
+      }
+    }
+  ],
+  "U9-4": [
+    {
+      "trial": 1,
+      "pass": true,
+      "detail": {
+        "matched": "6/6",
+        "total requests": "reported 21 | recount 21",
+        "by outcome": "reported {'client_error': 3, 'ok': 16, 'rate_limited': 2} | recount {'ok': 16, 'rate_limited': 2, 'client_error': 3}",
+        "rate-limit hits": "reported 2 | recount 2",
+        "total failures": "reported 5 | recount 5",
+        "input tokens": "reported 1335 | recount 1335",
+        "request p50 ms": "reported 31.695 | recount 31.695"
+      }
+    },
+    {
+      "trial": 2,
+      "pass": true,
+      "detail": {
+        "matched": "6/6",
+        "total requests": "reported 21 | recount 21",
+        "by outcome": "reported {'client_error': 3, 'ok': 16, 'rate_limited': 2} | recount {'ok': 16, 'rate_limited': 2, 'client_error': 3}",
+        "rate-limit hits": "reported 2 | recount 2",
+        "total failures": "reported 5 | recount 5",
+        "input tokens": "reported 1335 | recount 1335",
+        "request p50 ms": "reported 33.71 | recount 33.71"
+      }
+    },
+    {
+      "trial": 3,
+      "pass": true,
+      "detail": {
+        "matched": "6/6",
+        "total requests": "reported 21 | recount 21",
+        "by outcome": "reported {'client_error': 3, 'ok': 16, 'rate_limited': 2} | recount {'ok': 16, 'rate_limited': 2, 'client_error': 3}",
+        "rate-limit hits": "reported 2 | recount 2",
+        "total failures": "reported 5 | recount 5",
+        "input tokens": "reported 1335 | recount 1335",
+        "request p50 ms": "reported 32.345 | recount 32.345"
+      }
+    }
+  ],
+  "U9-5": [
+    {
+      "trial": 1,
+      "pass": true,
+      "detail": {
+        "same answers on/off": "10/10",
+        "correct with telemetry files unwritable": "11/11"
+      }
+    },
+    {
+      "trial": 2,
+      "pass": true,
+      "detail": {
+        "same answers on/off": "10/10",
+        "correct with telemetry files unwritable": "11/11"
+      }
+    },
+    {
+      "trial": 3,
+      "pass": true,
+      "detail": {
+        "same answers on/off": "10/10",
+        "correct with telemetry files unwritable": "11/11"
+      }
+    }
+  ]
+}

@@ -1,0 +1,1 @@
+{"status": 500, "records": 1, "stage": "model_signal", "category": "model_unavailable", "error_type": "DetectorUnavailable", "run_id_matches": true, "message": true, "model": "not-a-real-model-xyz"}

@@ -1680,3 +1680,186 @@ The failure path was exercised with other failures earlier in testing: a rate-li
 | Input tokens | 69.2 | 8.8 | 58 | 86 |
 
 The model call is about 97% of wall time. Not counted in the average: the one-time model load on the first request after a start (2.3 s in this measurement; 4.3 s and 2.5 s in two earlier sessions). The figures are for this laptop; CPU exceeds wall because PyTorch uses several threads. Texts under 40 words skip the model and cost almost nothing. To convert seconds to dollars, set `AI201_COMPUTE_USD_PER_HOUR`.
+
+## How Each Unit 9 Criterion Is Run
+
+The five criteria (U9-1 to U9-5) are in `criteria.md`. This section says what has to be run to produce the number for each one. `python check_unit9.py` runs all of it, three times, and writes the numbers to `results/unit9_criteria_<timestamp>.md` (and `.json`). A criterion is met only if all 3 trials pass.
+
+**Setup common to all five.** The script serves a private copy of the real app over HTTP on a free local port and sends its logs to a temp folder, so `logs/` is not touched. It loads the model and warms it up once before trial 1 (not counted). Each trial uses a fresh `creator_id`, so rate-limit counts never carry over.
+
+| Criterion | What is run, per trial | Total across 3 trials |
+|---|---|---|
+| **U9-1** traceability | One 20-request batch: 6 valid submits from one creator, 2 more from that creator (these are the rate-limited ones), 4 valid submits from other creators, 3 refused inputs (spaces only, no `text` field, `text` that is a number), 3 `/ping`, 2 `/health`. Then read each response's `X-Request-ID`, count it in `runs.jsonl`, and look for it in `audit.jsonl` | 60 requests |
+| **U9-2** failure records | Failures are **triggered on purpose**: 2 refused inputs, and 8 submits from one creator so the 7th and 8th get a `429`. Then a separate process is started with `AI201_DETECTOR_MODEL=not-a-real-model-xyz` and sent one valid 40+ word text, forcing a real model-load failure (`500`). The failure file must hold exactly the expected records, no extras, each with the right stage, category and status | 15 deliberate failures |
+| **U9-3** timing | 20 `/submit` requests over real HTTP after the warm-up, one at a time, each with a different text. A client stopwatch around the whole HTTP call is compared with the recorded `duration_ms`, and the stage durations are summed | 60 timed requests, reported as a distribution |
+| **U9-4** metrics | One 21-request batch (6 valid + 2 rate-limited from one creator, 10 valid from others, 3 refused). Then `GET /metrics`, and the same six figures recounted in plain Python from `runs.jsonl` and `failures.jsonl` | 63 requests |
+| **U9-5** telemetry never in the way | (a) 10 fixed texts, each submitted twice, telemetry on then off (`AI201_TELEMETRY=0`), comparing every field of the two responses except the new `content_id`. (b) `runs.jsonl` and `failures.jsonl` made into directories so every telemetry write fails, then 10 valid submits and 1 blank-text submit | 63 requests |
+
+**Why this much.** U9-2 needs failures, so the script causes each kind itself rather than waiting for one. U9-3 is about latency, so it uses 20 requests per trial (60 in all) and reports min, mean, p50, p95, p99 and max of the gap between the two clocks, not one number. The model-load failure runs in its own process because the model is cached in memory once loaded, so it can't be broken from inside a process that already loaded it.
+
+### Result of the run (3 trials)
+
+| Criterion | Trial 1 | Trial 2 | Trial 3 | Verdict |
+|---|---|---|---|---|
+| U9-1 traceability: 20/20 headers, 20/20 run records, 15/15 audit entries | PASS | PASS | PASS | met |
+| U9-2 failure records: 5/5 exactly one correct record | PASS | PASS | PASS | met |
+| U9-3 timing: 20/20 within 15 ms and stages ≥ 98% | PASS | PASS | PASS | met |
+| U9-4 metrics: 6/6 figures equal the recount | PASS | PASS | PASS | met |
+| U9-5 telemetry never in the way: 10/10 and 11/11 | PASS | PASS | PASS | met |
+
+Numbers behind the timing cell: the client clock was 0.96 to 2.27 ms above the recorded time (15 ms allowed), the stages covered at least 98.7% of each request (98% required), and the model call was at least 99% of the model stage. Request latency over the 60 timed requests: mean 36.3 ms, p50 33.1, p95 57.2, p99 66.3, max 73.2.
+
+Two things worth knowing about this result. First, the stage-coverage margin is thin: the lowest value, 98.7%, passed a 98% threshold by under one point, so a small amount of new untimed work in the request path would make U9-3 fail. Second, I checked that the script can report a miss: tightening the gap limit to 0.5 ms, or the coverage to 99.9%, makes U9-3 fail 0 of 20, as it should.
+
+### Real output behind each criterion
+
+Everything below is copied, unedited, from trial 1 of the run above. The lines come from the log files that trial wrote and from `results/unit9_criteria_2026-11-12_2309.json`. The run wrote its logs to a temp folder, so a copy of trial 1's files is kept in `results/unit9_2026-11-12_2309_trial1_logs/` and every line can be checked against its source (`t1-u1/` for U9-1, `t1-u2/` and `t1-badmodel-logs/` for U9-2, `t1-u3/` for U9-3, `t1-u4/` for U9-4, `t1-u5a/` and `t1-u5b/` for U9-5; `.gitkeep` files stand in for the two directories U9-5 creates in place of the telemetry logs). Long files are cut to a few representative lines, and each block says how many there were.
+
+#### **U9-1: Traceability**
+
+- *Function:* `u9_1`  *File:* `check_unit9.py` — sends the 20-request batch and counts the ids
+- *Function:* `Run.finish`  *File:* `telemetry.py` — writes each run record, through `write_record`
+- *Function:* `_append`  *File:* `audit.py` — writes each audit entry and copies the `run_id` into it
+
+Trial 1's batch produced 20 run records and 15 audit entries. Three of the 20 run records are shown (a valid submit, a rate-limited request, a refused input). The audit entries that follow them carry the same `run_id`, which is the join this criterion checks. The last block is what `u9_1` reported.
+
+```json
+{"schema_version": 1, "record_type": "run", "run_id": "2fe3c66c04c543ddb7b2c4ba436c0931", "started_at": "2026-11-13T05:09:45.991+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 56.606, "input": {"chars": 815, "words": 139, "sha256_16": "6171cfca8d19792b"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 55.869, "inference_ms": 55.525, "overhead_ms": 0.344}, {"name": "style_signal", "status": "ok", "duration_ms": 0.137}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.284}], "inference": [{"model": "gpt2", "input_tokens": 173, "tokenize_ms": 0.297, "forward_ms": 55.525, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 173, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.056606, "inference": 0.055525, "cpu": 0.096898}}, "failure_categories": [], "context": {"content_id": "d155d481-c9d5-4909-9364-5ce77a24b749", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "134cdc1b3f6b4763adbdb0a53ead7f75", "started_at": "2026-11-13T05:09:46.217+00:00", "route": "/submit", "method": "POST", "http_status": 429, "outcome": "rate_limited", "duration_ms": 0.282, "input": null, "stages": [], "inference": [], "usage": {"model": null, "input_tokens": 0, "output_tokens": 0, "source": null}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": null, "compute_seconds": {"wall": 0.000282, "inference": 0.0, "cpu": 0.000294}}, "failure_categories": ["rate_limit"], "context": {}}
+{"schema_version": 1, "record_type": "run", "run_id": "500229f073394afe874e4a96c79dc774", "started_at": "2026-11-13T05:09:46.373+00:00", "route": "/submit", "method": "POST", "http_status": 400, "outcome": "client_error", "duration_ms": 0.256, "input": {"chars": 3, "words": 0, "sha256_16": "0aad7da77d2ed59c"}, "stages": [], "inference": [], "usage": {"model": null, "input_tokens": 0, "output_tokens": 0, "source": null}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": null, "compute_seconds": {"wall": 0.000256, "inference": 0.0, "cpu": 0.000269}}, "failure_categories": ["validation_failure"], "context": {}}
+```
+
+```json
+{"timestamp": "2026-11-13T05:09:46+00:00", "content_id": "d155d481-c9d5-4909-9364-5ce77a24b749", "creator_id": "t1u1-flood", "guess": "unsure", "model_score": 0.4578, "style_score": 0.6731, "combined_score": 0.6085, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided", "run_id": "2fe3c66c04c543ddb7b2c4ba436c0931"}
+{"timestamp": "2026-11-13T05:09:46+00:00", "creator_id": "t1u1-flood", "event": "rejected", "status": "rejected", "reason": "rate_limited", "limit": "6 per 1 minute", "run_id": "134cdc1b3f6b4763adbdb0a53ead7f75"}
+{"timestamp": "2026-11-13T05:09:46+00:00", "creator_id": "t1u1-bad", "event": "rejected", "status": "rejected", "reason": "invalid_text", "run_id": "500229f073394afe874e4a96c79dc774"}
+```
+
+```json
+{"trial": 1, "pass": true, "detail": {"header": "20/20", "one run record each": "20/20", "run records in file": 20, "audit entries joined": "15/15"}}
+```
+
+#### **U9-2: Failure records**
+
+- *Function:* `u9_2`  *File:* `check_unit9.py` — deliberately causes the failures (2 refused inputs, 2 rate-limited requests) and checks each record
+- *Function:* `u9_2_bad_model`  *File:* `check_unit9.py` — starts a fresh process with a model name that does not exist
+- *Function:* `worker_bad_model`  *File:* `check_unit9.py` — runs inside that process and sends one valid text
+- *Function:* `Run.add_failure`  *File:* `telemetry.py` — creates each failure record (called from `stage` for exceptions, and from `Run.finish` for refusals and 429s)
+- *Function:* `_load`  *File:* `detector.py` — raises `DetectorUnavailable`, the real error behind the model-load failure
+
+The batch's failure file held exactly 4 lines, two `429` and two `400`. The model-load run produced exactly 1 line (the `message` is cut at 300 characters by `add_failure`), followed by what the worker reported about the response. The last block is what `u9_2` reported.
+
+```json
+{"schema_version": 1, "record_type": "failure", "run_id": "75a6ec1bc6bd47edb54a28beb4abbe49", "timestamp": "2026-11-13T05:09:46.595+00:00", "route": "/submit", "stage": "request", "category": "rate_limit", "error_type": null, "message": "rate_limited", "http_status": 429, "context": {}}
+{"schema_version": 1, "record_type": "failure", "run_id": "669b97c28ba941cfb0aa06dc958ce901", "timestamp": "2026-11-13T05:09:46.597+00:00", "route": "/submit", "stage": "request", "category": "rate_limit", "error_type": null, "message": "rate_limited", "http_status": 429, "context": {}}
+{"schema_version": 1, "record_type": "failure", "run_id": "e515e37a5768450481a9a257053fdd47", "timestamp": "2026-11-13T05:09:46.597+00:00", "route": "/submit", "stage": "validate", "category": "validation_failure", "error_type": null, "message": "invalid_text", "http_status": 400, "context": {}}
+{"schema_version": 1, "record_type": "failure", "run_id": "8804f28117e24046b1e2655531f54510", "timestamp": "2026-11-13T05:09:46.598+00:00", "route": "/submit", "stage": "validate", "category": "validation_failure", "error_type": null, "message": "invalid_text", "http_status": 400, "context": {}}
+```
+
+```json
+{"schema_version": 1, "record_type": "failure", "run_id": "f4ceb66acb644b6da40e2b4560fd2f43", "timestamp": "2026-11-13T05:09:47.794+00:00", "route": "/submit", "stage": "model_signal", "category": "model_unavailable", "error_type": "DetectorUnavailable", "message": "Couldn't load 'not-a-real-model-xyz': We couldn't connect to 'https://huggingface.co' to load the files, and couldn't find them in the cached files.\nCheck your internet connection or see how to run the library in offline mode at 'https://huggingface.co/docs/transformers/installation#offline-mode'.\nT", "http_status": 500, "context": {}}
+{"status": 500, "records": 1, "stage": "model_signal", "category": "model_unavailable", "error_type": "DetectorUnavailable", "run_id_matches": true, "message": true, "model": "not-a-real-model-xyz"}
+```
+
+```json
+{"trial": 1, "pass": true, "detail": {"matched": "5/5", "extra records": 0, "model-load failure": "500 / model_signal / model_unavailable", "batch": "limited:429:ok limited:429:ok refused:400:ok refused:400:ok"}}
+```
+
+#### **U9-3: Timing**
+
+- *Function:* `u9_3`  *File:* `check_unit9.py` — sends 20 warm requests and compares a client stopwatch with the recorded time
+- *Function:* `stage`  *File:* `telemetry.py` — times each stage and works out the overhead
+- *Function:* `perplexity`  *File:* `detector.py` — times the model call itself and reports it through `telemetry.py::record_inference`
+
+Two of the 20 timed run records are shown. Compare `duration_ms` with the stage durations, and `inference_ms` plus `overhead_ms` with the `model_signal` stage. The last block is what `u9_3` reported, including the gap between the client stopwatch and `duration_ms` over all 20 requests (the script keeps that summary, not each request's client time).
+
+```json
+{"schema_version": 1, "record_type": "run", "run_id": "1dfb079353fb431b89c36f624aed7108", "started_at": "2026-11-13T05:09:48.036+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 61.456, "input": {"chars": 815, "words": 139, "sha256_16": "6171cfca8d19792b"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 60.496, "inference_ms": 59.986, "overhead_ms": 0.51}, {"name": "style_signal", "status": "ok", "duration_ms": 0.169}, {"name": "combine", "status": "ok", "duration_ms": 0.003}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.269}], "inference": [{"model": "gpt2", "input_tokens": 173, "tokenize_ms": 0.458, "forward_ms": 59.986, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 173, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.061456, "inference": 0.059986, "cpu": 0.105823}}, "failure_categories": [], "context": {"content_id": "41366487-a248-4210-b40d-02a6cbbd3cfd", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+{"schema_version": 1, "record_type": "run", "run_id": "85379cbc2fad495498018808a604504f", "started_at": "2026-11-13T05:09:48.099+00:00", "route": "/submit", "method": "POST", "http_status": 200, "outcome": "ok", "duration_ms": 33.431, "input": {"chars": 436, "words": 67, "sha256_16": "eb3d58ad5172a284"}, "stages": [{"name": "model_signal", "status": "ok", "duration_ms": 32.879, "inference_ms": 32.648, "overhead_ms": 0.231}, {"name": "style_signal", "status": "ok", "duration_ms": 0.093}, {"name": "combine", "status": "ok", "duration_ms": 0.001}, {"name": "label", "status": "ok", "duration_ms": 0.001}, {"name": "audit_write", "status": "ok", "duration_ms": 0.184}], "inference": [{"model": "gpt2", "input_tokens": 74, "tokenize_ms": 0.196, "forward_ms": 32.648, "load_ms": 0.0, "cold_start": false}], "usage": {"model": "gpt2", "input_tokens": 74, "output_tokens": 0, "source": "local"}, "cost": {"usd": 0.0, "token_usd": 0.0, "compute_usd": 0.0, "priced_model": "gpt2", "compute_seconds": {"wall": 0.033431, "inference": 0.032648, "cpu": 0.050494}}, "failure_categories": [], "context": {"content_id": "49031d5d-56a7-4bad-b74e-c0a464c748eb", "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you."}}
+```
+
+```json
+{"trial": 1, "pass": true, "detail": {"within 15 ms": "20/20", "stages >= 98%": "20/20", "gap ms (min/mean/max)": "0.97 / 1.19 / 2.27", "min stage coverage": "0.9891", "model share of model_signal stage (min)": "0.991"}}
+```
+
+#### **U9-4: Metrics against a recount**
+
+- *Function:* `u9_4`  *File:* `check_unit9.py` — sends the 21-request batch, calls `/metrics`, and recounts the raw files in plain Python
+- *Function:* `get_metrics`  *File:* `app.py` — serves `GET /metrics`
+- *Function:* `compute`  *File:* `metrics.py` — does the aggregation
+
+The script compared the two in memory and did not save the `/metrics` response, so the first block is `metrics.py::compute()` run afterwards on that trial's own `runs.jsonl` and `failures.jsonl` (21 and 5 lines). The second block is what `u9_4` reported.
+
+```json
+{
+ "requests": {
+  "total": 21,
+  "by_outcome": {
+   "ok": 16,
+   "rate_limited": 2,
+   "client_error": 3
+  },
+  "error_rate": 0.0,
+  "rejected_rate": 0.2381
+ },
+ "failures": {
+  "total": 5,
+  "by_category": {
+   "rate_limit": 2,
+   "validation_failure": 3
+  },
+  "by_stage": {
+   "request": 2,
+   "validate": 3
+  }
+ },
+ "cost.input_tokens": 1335,
+ "link.rate_limit_hits": 2,
+ "link.status_codes": {
+  "200": 16,
+  "400": 3,
+  "429": 2
+ },
+ "latency_ms.request": {
+  "count": 21,
+  "mean": 26.053,
+  "p50": 31.695,
+  "p95": 53.413,
+  "p99": 55.287,
+  "max": 55.756
+ }
+}
+```
+
+```json
+{"trial": 1, "pass": true, "detail": {"matched": "6/6", "total requests": "reported 21 | recount 21", "by outcome": "reported {'client_error': 3, 'ok': 16, 'rate_limited': 2} | recount {'ok': 16, 'rate_limited': 2, 'client_error': 3}", "rate-limit hits": "reported 2 | recount 2", "total failures": "reported 5 | recount 5", "input tokens": "reported 1335 | recount 1335", "request p50 ms": "reported 31.695 | recount 31.695"}}
+```
+
+#### **U9-5: Telemetry never in the way**
+
+- *Function:* `u9_5`  *File:* `check_unit9.py` — runs both parts of the check
+- *Function:* `_append`  *File:* `audit.py` — adds a `run_id` to an audit entry only when a run is active
+- *Function:* `current_run_id`  *File:* `telemetry.py` — tells `_append` whether a run is active
+- *Function:* `write_record`  *File:* `telemetry.py` — swallows the write error when the telemetry files are unwritable
+
+Part (a): the first two texts, each submitted with telemetry on (`creator_id` ending `-True`) and then off (`-False`). The scores, guess and label are identical, and only the telemetry-on entries carry a `run_id`. The file held 20 entries; 4 are shown. Part (b): the folder listing shows the two telemetry files replaced by directories, so every telemetry write fails, yet the audit file still has all 11 entries; the first (a valid submit) and the last (the blank-text refusal) are shown. The last block is what `u9_5` reported.
+
+```json
+{"timestamp": "2026-11-13T05:09:49+00:00", "content_id": "1ea390bb-2549-46a4-8712-25cb136657ef", "creator_id": "t1u5-0-True", "guess": "unsure", "model_score": 0.4578, "style_score": 0.6731, "combined_score": 0.6085, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided", "run_id": "c6c3c277f974438f93a6aabc02d076a5"}
+{"timestamp": "2026-11-13T05:09:49+00:00", "content_id": "a092f79a-0b1b-4371-b58c-935116e3dec1", "creator_id": "t1u5-0-False", "guess": "unsure", "model_score": 0.4578, "style_score": 0.6731, "combined_score": 0.6085, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided"}
+{"timestamp": "2026-11-13T05:09:49+00:00", "content_id": "ea350642-b86e-4509-a0fd-52aecc1b2474", "creator_id": "t1u5-1-True", "guess": "unsure", "model_score": 0.338, "style_score": 0.6666, "combined_score": 0.568, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided", "run_id": "bc31ef5ba29e40af95d6b50fcc7d939f"}
+{"timestamp": "2026-11-13T05:09:49+00:00", "content_id": "941fb309-0522-4446-9685-a313e90c27c2", "creator_id": "t1u5-1-False", "guess": "unsure", "model_score": 0.338, "style_score": 0.6666, "combined_score": 0.568, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided"}
+```
+
+```
+['audit.jsonl', 'failures_is_a_dir', 'runs_is_a_dir']
+```
+
+```json
+{"timestamp": "2026-11-13T05:09:50+00:00", "content_id": "e05d6b7a-8a50-4b6e-bd4e-717a71c34830", "creator_id": "t1u5b-0", "guess": "unsure", "model_score": 0.4578, "style_score": 0.6731, "combined_score": 0.6085, "label": "We can't tell whether a person or an AI wrote this. That isn't a judgment about you or your writing, and nothing more is needed from you.", "status": "decided", "run_id": "7b8c3110d11b4ad2ac4b939a4cd129cd"}
+{"timestamp": "2026-11-13T05:09:50+00:00", "creator_id": "t1u5b-blank", "event": "rejected", "status": "rejected", "reason": "invalid_text", "run_id": "4701ea385fb74c6da7fa89f5a60699f3"}
+```
+
+```json
+{"trial": 1, "pass": true, "detail": {"same answers on/off": "10/10", "correct with telemetry files unwritable": "11/11"}}
+```
