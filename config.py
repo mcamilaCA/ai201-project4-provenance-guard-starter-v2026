@@ -124,3 +124,31 @@ RATE_LIMIT_STORAGE = "memory://"
 LOG_DIR = ROOT / "logs"
 AUDIT_LOG = LOG_DIR / "audit.jsonl"
 RESULTS_DIR = ROOT / "results"
+
+
+# ─── Telemetry: timings, cost, failures, metrics ─────────────────────────────
+# Every request gets a run_id and one execution record (see telemetry.py). They
+# are written beside the audit log, as JSON lines, and never inside it, so the
+# audit log keeps its shape. Set AI201_TELEMETRY=0 to switch recording off; the
+# service behaves identically either way.
+
+TELEMETRY_ENABLED = os.getenv("AI201_TELEMETRY", "1") == "1"
+
+RUNS_LOG = LOG_DIR / "runs.jsonl"                  # one record per request
+FAILURES_LOG = LOG_DIR / "failures.jsonl"          # one record per failure
+CLIENT_LINK_LOG = LOG_DIR / "client_link.jsonl"    # one per client-side attempt
+
+# Pricing, in US dollars per million tokens. The detector is a local model, so
+# there is no bill and every rate is 0.0 — the cost figure is a real, working
+# calculation that happens to come out at zero. Two ways to make it non-zero:
+#   - a per-token rate here, if you swap in a hosted model, e.g.
+#       "claude-haiku-5-5": {"input_per_mtok": 1.0, "output_per_mtok": 5.0}
+#     (look up current prices; these numbers are an example, not a quote)
+#   - a machine rate for the local model, via AI201_COMPUTE_USD_PER_HOUR
+#     (what the box running inference costs you per hour), charged for the
+#     seconds the model itself ran.
+PRICING = {
+    "default": {"input_per_mtok": 0.0, "output_per_mtok": 0.0},
+    "gpt2": {"input_per_mtok": 0.0, "output_per_mtok": 0.0},
+}
+COMPUTE_USD_PER_HOUR = float(os.getenv("AI201_COMPUTE_USD_PER_HOUR", "0"))

@@ -24,6 +24,7 @@ import threading
 from datetime import datetime, timezone
 
 import config
+import telemetry
 
 _lock = threading.Lock()
 
@@ -143,6 +144,11 @@ def is_verified(creator_id: str) -> bool:
 
 
 def _append(entry: dict) -> dict:
+    # Tie this entry to the request that caused it (see telemetry.py). Absent
+    # outside a request, so scripts that write the log directly are unchanged.
+    run_id = telemetry.current_run_id()
+    if run_id and "run_id" not in entry:
+        entry["run_id"] = run_id
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     line = json.dumps(entry, ensure_ascii=False)
     with _lock:

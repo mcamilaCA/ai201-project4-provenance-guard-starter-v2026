@@ -57,6 +57,7 @@ import sys
 from pathlib import Path
 
 import config
+import link_client
 
 # Windows consoles often run a codepage that can't print every character in
 # this file's help text. Without this, `--help` ends in a UnicodeEncodeError
@@ -143,15 +144,15 @@ def send(url, attack, timeout):
 
     try:
         if "raw" in attack:
-            response = requests.post(
-                f"{url}/submit",
+            response = link_client.request(
+                "POST", f"{url}/submit",
                 data=attack["raw"].encode("utf-8"),
                 headers={"Content-Type": attack["content_type"]},
                 timeout=timeout,
             )
         else:
-            response = requests.post(f"{url}/submit", json=attack["body"],
-                                     timeout=timeout)
+            response = link_client.request("POST", f"{url}/submit", json=attack["body"],
+                                           timeout=timeout)
     except Exception as exc:  # noqa: BLE001
         return None, None, f"{type(exc).__name__}: {exc}"
 

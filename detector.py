@@ -42,11 +42,14 @@ for yourself where it lands.
 """
 
 import math
+import time
 
 import config
+import telemetry
 
 _model = None
 _tokenizer = None
+_last_load_seconds = 0.0  # >0 only on the call that loaded the model
 
 
 class DetectorUnavailable(RuntimeError):
@@ -55,9 +58,11 @@ class DetectorUnavailable(RuntimeError):
 
 def _load():
     """Load the model once and keep it. First call downloads ~550 MB."""
-    global _model, _tokenizer
+    global _model, _tokenizer, _last_load_seconds
     if _model is not None:
+        _last_load_seconds = 0.0
         return _model, _tokenizer
+    load_started = time.perf_counter()
 
     try:
         import torch  # noqa: F401
@@ -79,6 +84,7 @@ def _load():
             f"that you have disk space free."
         ) from exc
 
+    _last_load_seconds = time.perf_counter() - load_started
     return _model, _tokenizer
 
 
@@ -93,12 +99,14 @@ def perplexity(text: str) -> float:
     import torch
 
     model, tokenizer = _load()
+    load_s = _last_load_seconds
 
     # Line breaks and extra spaces are tokens too, and the same words scored
     # anywhere from 36 to 115 depending only on how they were laid out. Collapse
     # all whitespace to single spaces so layout can't move the score.
     text = " ".join(text.split())
 
+    tokenize_started = time.perf_counter()
     encoded = tokenizer(
         text,
         return_tensors="pt",
@@ -106,13 +114,26 @@ def perplexity(text: str) -> float:
         max_length=config.DETECTOR_MAX_TOKENS,
     )
     input_ids = encoded["input_ids"]
+    tokenize_s = time.perf_counter() - tokenize_started
 
     # Two tokens is not enough to be surprised by anything.
     if input_ids.shape[1] < 3:
         raise ValueError("Text is too short to score — a few sentences at least.")
 
+    # Only the model call is timed here, so inference latency stays separate
+    # from tokenising, model loading and everything around this function.
+    forward_started = time.perf_counter()
     with torch.no_grad():
         output = model(input_ids, labels=input_ids)
+    forward_s = time.perf_counter() - forward_started
+    telemetry.record_inference(
+        model=config.DETECTOR_MODEL,
+        input_tokens=int(input_ids.shape[1]),
+        forward_s=forward_s,
+        tokenize_s=tokenize_s,
+        load_s=load_s,
+        cold_start=load_s > 0,
+    )
 
     # The model's loss here IS mean negative log-likelihood per token.
     return float(math.exp(output.loss.item()))

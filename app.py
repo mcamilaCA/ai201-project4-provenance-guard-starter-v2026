@@ -32,9 +32,15 @@ from flask import Flask, jsonify, request
 import audit
 import config
 import scoring
+import metrics
 import stylometry
+import telemetry
 
 app = Flask(__name__)
+
+# Run ids and execution records. Must come before the rate limiter below so a
+# request the limiter rejects still gets a run_id.
+telemetry.init_app(app)
 
 
 # ── Rate limiting — UNIT 8 ────────────────────────────────────────────────────
@@ -218,6 +224,7 @@ def submit():
         creator_id = "unknown"
 
     if not isinstance(text, str) or not text.strip():
+        telemetry.mark_stage("validate")
         audit.log_rejection(creator_id=creator_id, reason="invalid_text")
         return jsonify({
             "error": "invalid_text",
@@ -226,24 +233,29 @@ def submit():
 
     content_id = str(uuid.uuid4())
 
-    model_score = detector.model_signal(text)
-    style_score = stylometry.style_signal(text)
-    combined_score = scoring.combine_signals(model_score, style_score)
-    guess, label = scoring.score_to_label(combined_score)
+    with telemetry.stage("model_signal"):
+        model_score = detector.model_signal(text)
+    with telemetry.stage("style_signal"):
+        style_score = stylometry.style_signal(text)
+    with telemetry.stage("combine"):
+        combined_score = scoring.combine_signals(model_score, style_score)
+    with telemetry.stage("label"):
+        guess, label = scoring.score_to_label(combined_score)
 
     # Distance of the combined score from 0.5, "no evidence either way":
     # 0.0 means the signals say nothing, 1.0 means they are as sure as they get.
     confidence = round(abs(combined_score - 0.5) * 2, 4)
 
-    audit.log_decision(
-        content_id=content_id,
-        creator_id=creator_id,
-        guess=guess,
-        model_score=model_score,
-        style_score=style_score,
-        combined_score=combined_score,
-        label=label,
-    )
+    with telemetry.stage("audit_write"):
+        audit.log_decision(
+            content_id=content_id,
+            creator_id=creator_id,
+            guess=guess,
+            model_score=model_score,
+            style_score=style_score,
+            combined_score=combined_score,
+            label=label,
+        )
 
     return jsonify({
         "content_id": content_id,
@@ -386,11 +398,54 @@ def get_log():
     return jsonify({"count": len(entries), "entries": entries})
 
 
+# ── Telemetry: read the records and metrics back ──────────────────────────────
+
+@app.get("/metrics")
+def get_metrics():
+    """
+    Aggregated counts, error rates, latency percentiles, cost and API-link
+    health. Optional `?since=<seconds>` limits it to a recent window.
+
+        curl "http://127.0.0.1:5000/metrics?since=3600"
+    """
+    return jsonify(metrics.compute(request.args.get("since", type=float)))
+
+
+@app.get("/runs")
+def get_runs():
+    """Execution records, most recent last. `?limit=` keeps the last N;
+    `?run_id=` returns one run together with its failures."""
+    runs = telemetry.read_records(config.RUNS_LOG)
+    run_id = request.args.get("run_id")
+    if run_id:
+        runs = [r for r in runs if r.get("run_id") == run_id]
+        failures = [f for f in telemetry.read_records(config.FAILURES_LOG)
+                    if f.get("run_id") == run_id]
+        audit_entries = [e for e in audit.read_entries() if e.get("run_id") == run_id]
+        return jsonify({"runs": runs, "failures": failures, "audit": audit_entries})
+    limit = request.args.get("limit", type=int)
+    runs = runs[-limit:] if limit else runs
+    return jsonify({"count": len(runs), "runs": runs})
+
+
+@app.get("/failures")
+def get_failures():
+    """Failure records, most recent last. `?limit=` and `?category=` filter."""
+    failures = telemetry.read_records(config.FAILURES_LOG)
+    category = request.args.get("category")
+    if category:
+        failures = [f for f in failures if f.get("category") == category]
+    limit = request.args.get("limit", type=int)
+    failures = failures[-limit:] if limit else failures
+    return jsonify({"count": len(failures), "failures": failures})
+
+
 def main():
     print(f"Provenance Guard on http://{config.HOST}:{config.PORT}")
     print(f"  detector model:  {config.DETECTOR_MODEL}")
     print(f"  rate limiting:   {'ON' if config.RATE_LIMITING_ENABLED else 'off (unit 8)'}")
     print(f"  audit log:       {config.AUDIT_LOG}")
+    print(f"  telemetry:       {'ON  ' + str(config.RUNS_LOG) if config.TELEMETRY_ENABLED else 'off'}")
     print()
     print("Check it's alive:")
     print(f'  curl -X POST http://{config.HOST}:{config.PORT}/ping \\')

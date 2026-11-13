@@ -28,6 +28,7 @@ import sys
 from pathlib import Path
 
 import config
+import link_client
 
 # Windows consoles often run a codepage that can't print every character in
 # this file's help text. Without this, `--help` ends in a UnicodeEncodeError
@@ -116,8 +117,8 @@ def main():
             for i, body in enumerate(bodies_for(scenario), 1):
                 preview = describe(body)
                 try:
-                    response = requests.post(f"{args.url}/submit", json=body,
-                                             timeout=args.timeout)
+                    response = link_client.request("POST", f"{args.url}/submit", json=body,
+                                                    timeout=args.timeout)
                     payload = response.json() if response.content else {}
                     results.append({
                         "status": response.status_code,

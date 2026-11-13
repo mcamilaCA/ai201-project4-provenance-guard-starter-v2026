@@ -306,3 +306,30 @@ is evidence, and the entries you paste into your README are what unit 8 grades.
 
 **Do not delete and recreate this repository.** You submit the same URL both
 units.
+
+---
+
+## Telemetry and metrics
+
+Every request gets a `run_id` (returned as the `X-Request-ID` header, and written
+into its `audit.jsonl` entry). Records go beside the audit log as JSON lines:
+
+| File | One line per | Holds |
+|---|---|---|
+| `logs/runs.jsonl` | request | stage timings, model time vs overhead, tokens, cost, outcome |
+| `logs/failures.jsonl` | failure | stage, error type, message, category (`timeout`, `rate_limit`, `bad_response`, `validation_failure`, `model_unavailable`, …) |
+| `logs/client_link.jsonl` | client attempt | status, latency, retries, timeouts (from `run_eval.py` / `run_attacks.py`) |
+
+Read them back:
+
+```bash
+python metrics.py [--since 3600] [--json]     # counts, error rates, p50/p95/p99, cost, API-link health
+curl "http://127.0.0.1:5000/metrics?since=3600"
+curl "http://127.0.0.1:5000/runs?limit=10"
+curl "http://127.0.0.1:5000/runs?run_id=<id>"  # one request: run + failures + audit entries
+curl "http://127.0.0.1:5000/failures?category=rate_limit"
+```
+
+Cost is $0 by default because the detector runs locally; set `config.PRICING`
+or `AI201_COMPUTE_USD_PER_HOUR` to price it. `AI201_TELEMETRY=0` turns recording
+off. Self-check: `python test_telemetry.py`.
