@@ -49,7 +49,11 @@ ROOT = Path(__file__).resolve().parent
 TMP = Path(tempfile.mkdtemp(prefix="unit9_"))
 
 RESPONSE_KEYS = {"content_id", "guess", "confidence", "label", "model_score", "style_score"}
-GAP_LIMIT_MS = 15.0
+# U9-3 gap limit between the client stopwatch and the recorded duration_ms.
+# Revised from 15.0 to 5.0 on 2026-11-13 (see README, "U9-3 revised"). The
+# original 15 ms run is kept in results/unit9_criteria_2026-11-12_2309.md and
+# can be reproduced with --gap-limit 15.
+GAP_LIMIT_MS = 5.0
 STAGE_COVERAGE = 0.98
 BAD_MODEL = "not-a-real-model-xyz"
 
@@ -215,7 +219,7 @@ def u9_3(svc, texts, trial):
     good_gap = sum(1 for g in gaps if abs(g) <= GAP_LIMIT_MS)
     good_cov = sum(1 for row in rows if row["coverage"] >= STAGE_COVERAGE)
     ok = good_gap == 20 and good_cov == 20
-    return ok, {"within 15 ms": f"{good_gap}/20", "stages >= 98%": f"{good_cov}/20",
+    return ok, {f"within {GAP_LIMIT_MS:g} ms": f"{good_gap}/20", "stages >= 98%": f"{good_cov}/20",
                 "gap ms (min/mean/max)": f"{min(gaps):.2f} / {statistics.mean(gaps):.2f} / {max(gaps):.2f}",
                 "min stage coverage": f"{min(r['coverage'] for r in rows):.4f}",
                 "model share of model_signal stage (min)": f"{min(r['inference_share'] for r in rows):.3f}"}, \
@@ -317,7 +321,10 @@ def main():
 
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[1])
     parser.add_argument("--trials", type=int, default=3)
+    parser.add_argument("--gap-limit", type=float, default=GAP_LIMIT_MS,
+                        help="U9-3 gap limit in ms (default %(default)g; the original criterion used 15)")
     args = parser.parse_args()
+    globals()["GAP_LIMIT_MS"] = args.gap_limit
 
     texts = human_texts()
     svc = Service()
@@ -328,7 +335,7 @@ def main():
     criteria = [
         ("U9-1", "every request traced: 20/20 headers, 20/20 run records, 15/15 audit entries", u9_1),
         ("U9-2", "5/5 failures leave exactly one correct record", u9_2),
-        ("U9-3", "20/20 requests: recorded time within 15 ms of client clock, stages >= 98%", u9_3),
+        ("U9-3", f"20/20 requests: recorded time within {GAP_LIMIT_MS:g} ms of client clock, stages >= 98%", u9_3),
         ("U9-4", "6/6 /metrics figures equal a recount of the raw logs", u9_4),
         ("U9-5", "10/10 same answers on/off; 11/11 correct with telemetry unwritable", u9_5),
     ]

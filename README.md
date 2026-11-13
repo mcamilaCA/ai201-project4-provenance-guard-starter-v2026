@@ -1864,7 +1864,7 @@ Part (a): the first two texts, each submitted with telemetry on (`creator_id` en
 {"trial": 1, "pass": true, "detail": {"same answers on/off": "10/10", "correct with telemetry files unwritable": "11/11"}}
 ```
 
-### Verdicts: MET or MISSED
+### Verdicts: MET or MISSED (original run, U9-3 at 15 ms)
 
 Each verdict is against the target written in `criteria.md`, and a criterion counts as MET only if all 3 trials of the recorded run held it (`results/unit9_criteria_2026-11-12_2309.md`).
 
@@ -1888,3 +1888,89 @@ Each verdict is against the target written in `criteria.md`, and a criterion cou
 **The criterion I'd tighten: U9-3's gap target, from 15 ms to 5 ms.** The largest gap I measured was 2.27 ms in the recorded run and 2.02 ms in the re-run, so 15 ms is about 7 times the real maximum and would let a missing stage of several milliseconds through. At 5 ms the same 60 requests still pass 60/60 (59/60 at 2 ms), so 5 ms is tight enough to catch a real fault without failing on noise; my first probe saw a single 5.1 ms outlier, so it could still fail occasionally, and that is the point of tightening. For the coverage half of U9-3 the fix is the other way round: the target is already at the edge, so rather than loosen it I'd put the request handling around the stages inside a timed stage, so the untimed 0.25 ms is measured, and then raise the target to 99%.
 
 **What I'd add:** a criterion for the one thing no run shows yet: a client request that exceeds its timeout leaves a `client_link.jsonl` record with outcome `timeout` and, with `retries=2`, exactly 3 attempt records, in 5 of 5 trials.
+
+### U9-3 revised: gap limit tightened from 15 ms to 5 ms
+
+**What changed.** In `check_unit9.py` the constant `GAP_LIMIT_MS` went from `15.0` to `5.0` (a `--gap-limit` flag keeps the old value reproducible: `python check_unit9.py --gap-limit 15`). Nothing else changed: not the other four criteria, not the 98% stage-coverage half of U9-3, and not the service. The text of U9-3 in `criteria.md` is **unchanged** and still says 15 ms; this section is the documentation of the revision.
+
+**U9-3, revised.** Over 20 warm `/submit` requests sent over real HTTP in each of 3 trials, the recorded `duration_ms` is within **5 ms** of the client-measured time for every request, and the stage durations add up to at least 98% of `duration_ms` for every request. Target: 20 of 20 on both, in each trial.
+
+**Why revised.** This was not a miss. U9-3 passed at 15 ms with a worst gap of 2.27 ms, which means the limit was about 7 times the largest gap the system produces, so it could not catch a timing fault of any size below 15 ms. Tightening a target the system already met is allowed; loosening one it missed is not.
+
+**Why 5 ms and not stricter or looser.** The system's own gap ran 0.90 to 2.27 ms over 120 requests (the recorded run and this re-run). A typical request takes 28 to 33 ms, so 5 ms is about 15% of the time a writer waits: an unaccounted gap bigger than that means the timing record is missing about a sixth of the request. Looser fails that job: 15 ms let an 8 ms untimed delay through, with 0 of 20 caught. Stricter fails on noise: at 2 ms the earlier margin check passed only 59 of 60 requests with nothing wrong, and 3 ms leaves almost no headroom over the largest normal gap.
+
+**Verdict: MET**, in all 3 trials (20/20 within 5 ms and 20/20 stage coverage ≥ 98% each time), with the numbers below.
+
+#### Updated criteria table (all five, U9-3 revised)
+
+Targets are the ones in `criteria.md`, except U9-3, which uses the revised 5 ms gap. Results are from the re-run of 2026-11-13 13:23 (`results/unit9_criteria_2026-11-13_1323.md`), 3 trials. A criterion is MET only if all 3 trials hold it.
+
+| Criterion | Target | Why this target | Trial 1 | Trial 2 | Trial 3 | Verdict |
+|---|---|---|---|---|---|---|
+| **U9-1** Every request can be traced from response to log | 20 of 20 responses carry an `X-Request-ID`; the 20 ids appear exactly once in `runs.jsonl`; 15 of 15 audit entries carry the same `run_id` | The `run_id` is the join key between three files, so it is a rule, not a probability; one untraceable request is the one I'd be searching for | PASS | PASS | PASS | **MET** |
+| **U9-2** Every refused or failed request leaves exactly one correct failure record | 5 of 5 deliberate failures (2 bad inputs, 2 rate-limited, 1 model-load failure) leave exactly one record with the right stage and category, and no extras | A failure that shows up only as an absence is never found, and the category matters because `metrics.py` counts only 5xx as errors | PASS | PASS | PASS | **MET** |
+| **U9-3 (revised)** Recorded timings agree with an independent clock | 20 of 20 warm requests with recorded `duration_ms` within **5 ms** of the client stopwatch (was 15 ms) **and** stage durations adding up to at least 98% of `duration_ms` | Measured gap is 0.90 to 2.27 ms and a typical request is 28 to 33 ms; 5 ms catches an 8 ms untimed delay that 15 ms missed (0 of 20 vs 20 of 20), and 2 ms fails on noise | PASS | PASS | PASS | **MET** (coverage margin thin) |
+| **U9-4** `/metrics` reproduces a recount of the raw logs | 6 of 6 figures exact (total, outcomes, rate-limit hits, failures, input tokens, p50) | `metrics.py` stores nothing and recomputes from the files, so any difference is a bug; a tolerance would hide rare events like 2 rate-limit hits | PASS | PASS | PASS | **MET** |
+| **U9-5** Telemetry never changes or blocks a response | 10 of 10 same answers with telemetry on and off, and 11 of 11 correct with the telemetry files unwritable | A writer's verdict must not depend on a measurement tool, and a full disk must not turn a submission into a 500 | PASS | PASS | PASS | **MET** |
+
+**Miss count: 0 of 5.** The one caveat is U9-3's coverage half: it passed in all 3 trials (lowest 98.92%) but with under one point of margin, and an earlier margin check saw one request in 240 fall below 98%, so a future re-run could miss it.
+
+#### Before and after, side by side
+
+Same procedure, same machine, same 5 criteria, 3 trials each. **Before:** gap limit 15 ms, run of 2026-11-12 23:09 (`results/unit9_criteria_2026-11-12_2309.md`). **After:** gap limit 5 ms, run of 2026-11-13 13:23 (`results/unit9_criteria_2026-11-13_1323.md`).
+
+| Criterion | Before (15 ms): T1 / T2 / T3 | After (5 ms): T1 / T2 / T3 | Verdict before | Verdict after |
+|---|---|---|---|---|
+| U9-1 traceability | PASS / PASS / PASS | PASS / PASS / PASS | MET | MET |
+| U9-2 failure records | PASS / PASS / PASS | PASS / PASS / PASS | MET | MET |
+| **U9-3 timing** | PASS / PASS / PASS (limit 15 ms) | PASS / PASS / PASS (limit 5 ms) | MET | MET |
+| U9-4 metrics vs recount | PASS / PASS / PASS | PASS / PASS / PASS | MET | MET |
+| U9-5 telemetry never in the way | PASS / PASS / PASS | PASS / PASS / PASS | MET | MET |
+
+The numbers behind U9-3:
+
+| | Before T1 | Before T2 | Before T3 | After T1 | After T2 | After T3 |
+|---|---|---|---|---|---|---|
+| Requests within the gap limit | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 |
+| Gap ms (min / mean / max) | 0.97 / 1.19 / 2.27 | 1.11 / 1.28 / 1.94 | 0.96 / 1.12 / 2.12 | 1.01 / 1.14 / 2.24 | 0.95 / 1.08 / 1.90 | 0.90 / 1.06 / 2.03 |
+| Largest gap as a share of the limit | 15% | 13% | 14% | 45% | 38% | 41% |
+| Requests with stage coverage ≥ 98% | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 | 20/20 |
+| Lowest stage coverage | 98.91% | 98.74% | 99.06% | 98.92% | 99.02% | 99.12% |
+
+Request latency over the 60 timed requests (ms): before mean 36.3, p50 33.1, p95 57.2, p99 66.3, max 73.2; after mean 33.5, p50 32.0, p95 37.4, p99 69.0, max 73.8.
+
+#### Numbers for all five criteria, before and after
+
+The counts behind every PASS in both result sets, taken from `results/unit9_criteria_2026-11-12_2309.json` (before, gap limit 15 ms) and `results/unit9_criteria_2026-11-13_1323.json` (after, gap limit 5 ms). U9-1, U9-2 and U9-5 are identical because the service and those checks did not change; U9-4's p50 differs between runs because latency does.
+
+| Criterion | Before T1 | Before T2 | Before T3 | After T1 | After T2 | After T3 |
+|---|---|---|---|---|---|---|
+| **U9-1** headers / run records / audit joined | 20/20 / 20/20 / 15/15 | 20/20 / 20/20 / 15/15 | 20/20 / 20/20 / 15/15 | 20/20 / 20/20 / 15/15 | 20/20 / 20/20 / 15/15 | 20/20 / 20/20 / 15/15 |
+| **U9-2** records matched / extra records | 5/5 / 0 | 5/5 / 0 | 5/5 / 0 | 5/5 / 0 | 5/5 / 0 | 5/5 / 0 |
+| **U9-3** gap and coverage (limit 15 ms before, 5 ms after) | 20/20 within limit; coverage 20/20 (min 98.91%); gap max 2.27 ms | 20/20 within limit; coverage 20/20 (min 98.74%); gap max 1.94 ms | 20/20 within limit; coverage 20/20 (min 99.06%); gap max 2.12 ms | 20/20 within limit; coverage 20/20 (min 98.92%); gap max 2.24 ms | 20/20 within limit; coverage 20/20 (min 99.02%); gap max 1.90 ms | 20/20 within limit; coverage 20/20 (min 99.12%); gap max 2.03 ms |
+| **U9-4** figures matching / tokens / p50 | 6/6; tokens 1335; p50 31.695 ms | 6/6; tokens 1335; p50 33.71 ms | 6/6; tokens 1335; p50 32.345 ms | 6/6; tokens 1335; p50 31.574 ms | 6/6; tokens 1335; p50 31.718 ms | 6/6; tokens 1335; p50 31.64 ms |
+| **U9-5** same answers / correct when unwritable | 10/10 / 11/11 | 10/10 / 11/11 | 10/10 / 11/11 | 10/10 / 11/11 | 10/10 / 11/11 | 10/10 / 11/11 |
+
+#### Does the tighter limit catch anything the old one missed?
+
+I injected an untimed delay ahead of the telemetry hook (so the client sees it and the recorded duration does not) and scored both limits on 20 requests each (`results/unit9_u9-3_gap_sensitivity_2026-11-13.md`):
+
+| Untimed delay injected | Gap seen (mean) | Caught by 15 ms | Caught by 5 ms |
+|---|---|---|---|
+| 0 ms (normal) | 1.12 ms | 0/20 | 0/20 |
+| 3 ms | 4.75 ms | 0/20 | 0/20 |
+| 8 ms | 11.01 ms | 0/20 | **20/20** |
+| 12 ms | 15.85 ms | 18/20 | 20/20 |
+| 20 ms | 25.34 ms | 20/20 | 20/20 |
+
+#### Did it help?
+
+**As a test, yes. As an improvement to the system, no, and it came with a cost.**
+
+- **What got better:** U9-3 can now catch an untimed delay of about 5 ms or more. An 8 ms delay, about a quarter of a typical request, was invisible to the old limit (0 of 20 caught) and caught every time by the new one (20 of 20). A criterion that could not have failed for a fault that size now can.
+- **What did not change:** every result. All five criteria were MET before and after, and the gaps are the same within noise (largest 2.27 ms before, 2.24 ms after), as they should be because the service did not change. Tightening the target did not make the system better and did not find a bug.
+- **The trade: headroom fell from about 7 times to about 2 times.** The largest gap went from 15% of the limit to 45% of it. That makes U9-3 more likely to fail for no reason. Across every U9-3-style request I have measured (the first probe, the recorded run, the margin check and this re-run, about 200 in all), one had a gap over 5 ms: 5.12 ms, in the very first probe. At that rate a full 60-request run has very roughly a one in four chance of a false miss from the gap alone. That is a small sample, so treat it as a rough size and not a number to quote.
+- **What did not get better:** the 98% stage-coverage half of U9-3, which I flagged as passing by luck, is untouched. It passed here (lowest 98.92%) but with the same under-one-point margin, so it can still fail a re-run. Between the two halves, U9-3 is now the most fragile of the five criteria.
+- **A blind spot remains:** a 3 ms untimed delay produced a mean gap of 4.75 ms and was caught by neither limit. The 5 ms limit does not see faults smaller than about 4 ms.
+
+**Net:** a better criterion measuring the same system, with a higher chance of failing on noise. If I wanted to keep tightening, the next step is not a smaller number. It is putting the 0.25 ms of untimed request handling inside a timed stage, so the coverage half has real margin, before touching the gap again.

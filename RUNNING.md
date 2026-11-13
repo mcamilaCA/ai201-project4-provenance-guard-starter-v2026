@@ -182,7 +182,7 @@ python metrics.py
 | `python app.py` | Runs the service |
 | `python metrics.py` | Operational metrics from the telemetry logs (`--since 3600`, `--json`) |
 | `python measure_cost.py` | Measures the compute cost of one run over 10 runs; writes `results/cost_measurement_*.md` |
-| `python check_unit9.py` | Runs the unit-9 criteria (U9-1 to U9-5) three times, triggers failures on purpose, writes `results/unit9_criteria_*.md` |
+| `python check_unit9.py` | Runs the unit-9 criteria (U9-1 to U9-5) three times (`--gap-limit 15` reproduces the original U9-3 limit), triggers failures on purpose, writes `results/unit9_criteria_*.md` |
 | `python test_telemetry.py` | Self-check for the telemetry layer (no model needed) |
 | `python detector.py` | Downloads the model and scores a sample — **run before class** |
 | `python detector.py "some text"` | Score one piece of text from the terminal |
