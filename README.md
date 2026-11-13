@@ -1482,3 +1482,22 @@ format {"error" : "<code>", "message": "<human sentence>"}
 | `text` missing or not string | 400| invalid_text |
 | `text` empty or whitespace | 400 | empty_text`|
 | `creator_id` missing or non-empty string| 400 | invalid_creator |
+
+
+# Unit 9 - Request-Level Observability and Failure Diagnostics
+
+## Intention Summary 
+| Shape | Execution Path | Proposed Extension | Central Question |
+| -- | -- | -- | --|
+| A- Deploy & Instrument| Local Execution with Logs |Operational Observability | Can we make the existing service easier to monitor, evaluate, and diagnose without changing its underlying classification behavior? |
+
+## The Shape:
+
+Choice: A- Deploy and Instrument
+
+I want to add structured operational monitoring that records and measures the behavior of the system and existing API connection, this entails performance measurement, structured execution and failure record,  operational metrics and measurement of inference time and computing cost.
+
+*Out of Scopes*
+- Changipng model (currently is GPT2)
+- Change classification algorithm
+- Train a new model
